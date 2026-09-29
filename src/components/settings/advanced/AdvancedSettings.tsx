@@ -15,6 +15,7 @@ import { PostProcessingToggle } from "../PostProcessingToggle";
 import { AppendTrailingSpace } from "../AppendTrailingSpace";
 import { SmartSpacing } from "../SmartSpacing";
 import { VoiceCommands } from "../VoiceCommands";
+import { TargetWindowSetting } from "../TargetWindow";
 import { HistoryLimit } from "../HistoryLimit";
 import { RecordingRetentionPeriodSelector } from "../RecordingRetentionPeriod";
 import { ExperimentalToggle } from "../ExperimentalToggle";
@@ -56,6 +57,7 @@ export const AdvancedSettings: React.FC = () => {
         <AppendTrailingSpace descriptionMode="tooltip" grouped={true} />
         <SmartSpacing descriptionMode="tooltip" grouped={true} />
         <VoiceCommands descriptionMode="tooltip" grouped={true} />
+        <TargetWindowSetting descriptionMode="inline" grouped={true} />
       </SettingsGroup>
 
       <SettingsGroup title={t("settings.advanced.groups.history")}>

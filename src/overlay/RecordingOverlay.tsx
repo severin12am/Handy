@@ -51,11 +51,23 @@ const RecordingOverlay: React.FC = () => {
   const capRef = useRef<HTMLDivElement>(null);
   const pinnedRef = useRef(true);
   const direction = getLanguageDirection(i18n.language);
+  const overlayGenerationRef = useRef(0);
+  const [boundApp, setBoundApp] = useState("");
 
   useEffect(() => {
     const setupEventListeners = async () => {
       const unlistenShow = await listen("show-overlay", async (event) => {
-        const overlayState = event.payload as OverlayState;
+        const payload = event.payload as
+          | OverlayState
+          | { state?: OverlayState; generation?: number };
+        const overlayState =
+          typeof payload === "string" ? payload : payload.state ?? "recording";
+        const generation =
+          typeof payload === "string" ? overlayGenerationRef.current + 1 : payload.generation ?? 0;
+        if (generation < overlayGenerationRef.current) {
+          return;
+        }
+        overlayGenerationRef.current = generation;
         // Reset synchronously before settings I/O. A fast microphone can emit
         // recording-ready while the awaits below are in flight; resetting after
         // them would overwrite that event and leave the overlay stuck arming.
@@ -75,6 +87,12 @@ const RecordingOverlay: React.FC = () => {
             setPosition(
               settings.data.overlay_position === "top" ? "top" : "bottom",
             );
+            const target = settings.data.dictation_target;
+            setBoundApp(
+              target?.enabled
+                ? target.process_name || target.title_substring || ""
+                : "",
+            );
           }
         } catch {
           // Keep the previous/default placement if settings can't be read.
@@ -89,7 +107,12 @@ const RecordingOverlay: React.FC = () => {
         setIsVisible(true);
       });
 
-      const unlistenHide = await listen("hide-overlay", () => {
+      const unlistenHide = await listen("hide-overlay", (event) => {
+        const payload = event.payload as { generation?: number } | null;
+        const generation = payload?.generation ?? 0;
+        if (generation < overlayGenerationRef.current) {
+          return;
+        }
         setIsVisible(false);
         setCaptureReady(false);
       });
@@ -296,6 +319,7 @@ const RecordingOverlay: React.FC = () => {
       <div
         className={`scard compact ${working && isVisible ? "cworking" : ""}`}
       >
+        {boundApp ? <div className="sbound">{boundApp}</div> : null}
         {working ? workingRow(workLabel, true) : listeningRow(false, true)}
       </div>
     </div>

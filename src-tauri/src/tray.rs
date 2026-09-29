@@ -63,6 +63,8 @@ struct MenuInputs {
     downloaded_models: Vec<(String, String)>,
     locale: String,
     update_checks_enabled: bool,
+    /// Empty when no dictation target is bound.
+    target_label: String,
 }
 
 /// Complete description of what the tray should look like.
@@ -334,6 +336,19 @@ fn compute_desired(app: &AppHandle, icon_state: TrayIconState) -> TrayDesired {
             downloaded_models,
             locale: settings.app_language,
             update_checks_enabled: settings.update_checks_enabled,
+            target_label: settings
+                .dictation_target
+                .as_ref()
+                .map(|target| {
+                    let name = if target.process_name.is_empty() {
+                        target.title_substring.clone()
+                    } else {
+                        target.process_name.clone()
+                    };
+                    let state = if target.enabled { "on" } else { "off" };
+                    format!("Target: {name} ({state})")
+                })
+                .unwrap_or_default(),
         },
     }
 }
@@ -510,6 +525,18 @@ fn build_menu(app: &AppHandle, inputs: &MenuInputs) -> tauri::Result<(Menu<tauri
         None::<&str>,
     )?;
     let quit_i = MenuItem::with_id(app, "quit", &strings.quit, true, quit_accelerator)?;
+    let target_label = if inputs.target_label.is_empty() {
+        "Target window: none".to_string()
+    } else {
+        inputs.target_label.clone()
+    };
+    let target_i = MenuItem::with_id(
+        app,
+        "toggle_dictation_target",
+        &target_label,
+        !inputs.target_label.is_empty(),
+        None::<&str>,
+    )?;
     let separator = || PredefinedMenuItem::separator(app);
 
     let menu = if inputs.busy {
@@ -522,6 +549,7 @@ fn build_menu(app: &AppHandle, inputs: &MenuInputs) -> tauri::Result<(Menu<tauri
                 &cancel_i,
                 &separator()?,
                 &copy_last_transcript_i,
+                &target_i,
                 &separator()?,
                 &settings_i,
                 &check_updates_i,
@@ -560,6 +588,7 @@ fn build_menu(app: &AppHandle, inputs: &MenuInputs) -> tauri::Result<(Menu<tauri
                 &version_i,
                 &separator()?,
                 &copy_last_transcript_i,
+                &target_i,
                 &separator()?,
                 &model_submenu,
                 &unload_model_i,
@@ -694,6 +723,7 @@ mod tests {
             downloaded_models: vec![("small".to_string(), "Small".to_string())],
             locale: "en".to_string(),
             update_checks_enabled: true,
+            target_label: String::new(),
         }
     }
 

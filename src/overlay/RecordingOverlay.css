@@ -466,3 +466,11 @@
   overflow: hidden;
   text-overflow: ellipsis;
 }
+
+.sbound {
+  font-size: 11px;
+  line-height: 1.2;
+  text-align: center;
+  opacity: 0.75;
+  margin-bottom: 4px;
+}

@@ -296,6 +296,17 @@ pub enum TypingTool {
     Xdotool,
 }
 
+/// A window that should receive dictation even when another app is focused.
+#[derive(Debug, Clone, Serialize, Deserialize, Type, Default, PartialEq, Eq)]
+pub struct DictationTarget {
+    pub process_name: String,
+    pub title_substring: String,
+    #[serde(default)]
+    pub auto_enter: bool,
+    #[serde(default)]
+    pub enabled: bool,
+}
+
 #[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq, Type, Default)]
 #[serde(rename_all = "snake_case")]
 pub enum TranscribeAcceleratorSetting {
@@ -471,6 +482,9 @@ pub struct AppSettings {
     /// contains one of these substrings. Empty keeps the global toggle.
     #[serde(default)]
     pub auto_submit_apps: Vec<String>,
+    /// Optional window that receives dictation. Windows only in the UI.
+    #[serde(default)]
+    pub dictation_target: Option<DictationTarget>,
     #[serde(default = "default_app_language")]
     pub app_language: String,
     #[serde(default = "default_theme")]
@@ -926,6 +940,16 @@ pub fn get_default_settings() -> AppSettings {
             current_binding: "escape".to_string(),
         },
     );
+    bindings.insert(
+        "toggle_dictation_target".to_string(),
+        ShortcutBinding {
+            id: "toggle_dictation_target".to_string(),
+            name: "Toggle target window".to_string(),
+            description: "Turns the bound dictation window on or off.".to_string(),
+            default_binding: "ctrl+alt+b".to_string(),
+            current_binding: "ctrl+alt+b".to_string(),
+        },
+    );
 
     AppSettings {
         settings_schema_version: default_settings_schema_version(),
@@ -973,6 +997,7 @@ pub fn get_default_settings() -> AppSettings {
         smart_spacing: default_smart_spacing(),
         voice_commands_enabled: false,
         auto_submit_apps: Vec::new(),
+        dictation_target: None,
         app_language: default_app_language(),
         theme: default_theme(),
         experimental_enabled: false,

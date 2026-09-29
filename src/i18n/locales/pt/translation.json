@@ -256,6 +256,15 @@
       "volume": {
         "title": "Volume",
         "description": "Ajustar o volume dos sons de feedback de áudio"
+      },
+      "micTest": {
+        "title": "Microphone level",
+        "description": "Speak while testing. Digital silence means Handy is not receiving the microphone.",
+        "button": "Test microphone",
+        "testing": "Listening…",
+        "signal": "Signal detected (peak {{peak}}, {{format}})",
+        "silence": "Digital silence — Handy received no audio. Check the device, mute, and exclusive mode.",
+        "failed": "Microphone test failed"
       }
     },
     "advanced": {
@@ -612,6 +621,16 @@
       "voiceCommands": {
         "label": "Voice commands",
         "description": "Offline: \"new line\" / \"новая строка\" and \"new paragraph\" / \"новый абзац\" become line breaks."
+      },
+      "targetWindow": {
+        "title": "Target window",
+        "description": "Paste dictation into this app even when another window is focused.",
+        "pick": "Pick window in 3 seconds",
+        "refresh": "Refresh window list",
+        "clear": "Unbind",
+        "autoEnter": "Press Enter after pasting into the target",
+        "empty": "No window bound",
+        "enabled": "Binding on"
       }
     },
     "about": {
@@ -696,7 +715,11 @@
     "noMicrophoneAudioTitle": "No audio from the microphone",
     "noMicrophoneAudio": "Handy received digital silence. Check that the correct microphone is selected, unmuted, and not in exclusive use by another app.",
     "noSpeechTitle": "No speech detected",
-    "noSpeech": "The recording did not contain speech. Try again, or turn off voice activity detection if it is clipping your voice."
+    "noSpeech": "The recording did not contain speech. Try again, or turn off voice activity detection if it is clipping your voice.",
+    "micStreamStoppedTitle": "Microphone stopped",
+    "micStreamStopped": "The microphone stream stopped during the recording, so nothing was transcribed. Check the device and try again.",
+    "targetWindowMissingTitle": "Target window not found",
+    "targetWindowMissing": "The bound window is not open. The transcript was copied to the clipboard."
   },
   "appLanguage": {
     "title": "Idioma da Aplicação",
