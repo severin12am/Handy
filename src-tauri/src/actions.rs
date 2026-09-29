@@ -557,6 +557,12 @@ impl ShortcutAction for TranscribeAction {
 
         let mut recording_error: Option<String> = None;
         let recording_start_time = Instant::now();
+        // Mute before the microphone opens so playback is not captured during
+        // device init (cjpais/Handy#642). Based on the "mute immediately" idea
+        // in PR #2168 by @Pifan07, applied whenever mute-while-recording is on.
+        if settings.mute_while_recording {
+            rm.apply_mute();
+        }
         match rm.try_start_recording(&binding_id, vad_policy) {
             Ok(readiness) => {
                 debug!(
@@ -609,6 +615,7 @@ impl ShortcutAction for TranscribeAction {
             }
             Err(e) => {
                 debug!("Failed to start recording: {}", e);
+                rm.remove_mute();
                 recording_error = Some(e);
             }
         }
@@ -716,7 +723,13 @@ impl ShortcutAction for TranscribeAction {
                 if samples.is_empty() || digital_silence {
                     // Empty after VAD, or the device delivered zeros. Say so
                     // instead of pasting nothing (cjpais/Handy#1899, #2141).
-                    let code = if digital_silence {
+                    let code = if rm.capture_stream_failed() {
+                        // The capture callback died mid-take, which matches
+                        // reports of the waveform freezing and the release
+                        // producing nothing (cjpais/Handy#2070). Likely fixed
+                        // by surfacing it; not reproduced on this machine.
+                        "handy:mic-stream-stopped"
+                    } else if digital_silence {
                         "handy:no-microphone-audio"
                     } else {
                         "handy:no-speech"

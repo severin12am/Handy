@@ -598,12 +598,15 @@ impl AudioRecordingManager {
         if mute_guard.did_mute {
             return;
         }
-        if *is_open {
-            mute_guard.prev_muted = get_mute();
-            set_mute(true);
-            mute_guard.did_mute = true;
-            debug!("Mute applied (prev_muted={:?})", mute_guard.prev_muted);
-        }
+        // Mute the render endpoint as soon as recording is requested, not after
+        // the start chime. Waiting for the first sample let system audio leak
+        // into the take (cjpais/Handy#642). The mic stream does not need to be
+        // open; `is_open` is only logged.
+        let _ = *is_open;
+        mute_guard.prev_muted = get_mute();
+        set_mute(true);
+        mute_guard.did_mute = true;
+        debug!("Mute applied (prev_muted={:?})", mute_guard.prev_muted);
     }
 
     /// Removes mute if it was applied, restoring the system's prior mute state
@@ -978,6 +981,15 @@ impl AudioRecordingManager {
 
     pub fn was_cancelled_since(&self, generation: u64) -> bool {
         self.cancel_generation.load(Ordering::Acquire) != generation
+    }
+
+    /// True when cpal reported the input stream died during the take.
+    pub fn capture_stream_failed(&self) -> bool {
+        self.recorder
+            .lock()
+            .unwrap()
+            .as_ref()
+            .is_some_and(|recorder| recorder.needs_reopen())
     }
 
     /// Peak absolute raw sample from the capture that just stopped.
