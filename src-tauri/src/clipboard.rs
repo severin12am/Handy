@@ -871,6 +871,24 @@ fn should_send_auto_submit(auto_submit: bool, paste_method: PasteMethod) -> bool
     auto_submit && paste_method != PasteMethod::None
 }
 
+/// Press Enter while the bound window is still focused.
+fn send_target_enter(
+    app_handle: &AppHandle,
+    target_focused: bool,
+    auto_submit: bool,
+    paste_method: PasteMethod,
+    key: crate::settings::AutoSubmitKey,
+) {
+    if !target_focused || !should_send_auto_submit(auto_submit, paste_method) {
+        return;
+    }
+    // Give the target a moment to insert the paste before Enter.
+    std::thread::sleep(Duration::from_millis(180));
+    if let Err(error) = with_enigo(app_handle, |enigo| send_return_key(enigo, key)) {
+        log::warn!("Target auto-enter failed: {error}");
+    }
+}
+
 struct FocusRestore(Option<isize>);
 
 impl Drop for FocusRestore {
@@ -892,9 +910,12 @@ pub fn paste(text: String, app_handle: AppHandle) -> Result<(), String> {
     } else {
         text
     };
-    // Append trailing space if setting is enabled
-    let text = if settings.append_trailing_space {
-        format!("{} ", text)
+    // Smart spacing leaves a single trailing space so the first paste in an
+    // empty field (Notepad) is separated from whatever comes next. The
+    // explicit trailing-space setting does the same. A second paste sees that
+    // space and does not add another one.
+    let text = if settings.append_trailing_space || settings.smart_spacing {
+        crate::audio_toolkit::ensure_trailing_separator(&text)
     } else {
         text
     };
@@ -946,19 +967,36 @@ pub fn paste(text: String, app_handle: AppHandle) -> Result<(), String> {
             // the legacy path untouched.
             #[cfg(any(target_os = "macos", target_os = "windows"))]
             if settings.reliable_paste {
+                // When a target window is focused, send Enter ourselves after
+                // the chord and only then restore the previous app. Passing
+                // auto-submit into the async paste worker fires Enter after
+                // focus has already moved back.
+                let defer_enter = previous_focus.is_some();
                 let reliable_result = with_enigo(&app_handle, |enigo| {
                     crate::paste_tx::try_reliable_paste(
                         &text,
                         &app_handle,
                         &paste_method,
                         enigo,
-                        auto_submit,
+                        auto_submit && !defer_enter,
                         settings.auto_submit_key,
                         settings.clipboard_handling,
                     )
                 });
                 match reliable_result {
-                    Ok(()) => return Ok(()),
+                    Ok(()) => {
+                        // The chord is already sent. Enter must go to the bound
+                        // window before focus is restored, or it lands in
+                        // whichever app the user is looking at (Cursor).
+                        send_target_enter(
+                            &app_handle,
+                            previous_focus.is_some(),
+                            auto_submit,
+                            paste_method,
+                            settings.auto_submit_key,
+                        );
+                        return Ok(());
+                    }
                     Err(e) => {
                         log::warn!("Reliable paste unavailable ({e}); falling back to legacy paste")
                     }

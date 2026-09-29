@@ -22,11 +22,15 @@ export const TargetWindowSetting: React.FC<TargetWindowProps> = ({
   const target = getSetting("dictation_target");
   const [windows, setWindows] = useState<ListedWindow[]>([]);
   const [busy, setBusy] = useState(false);
+  const [listError, setListError] = useState("");
 
   const refreshWindows = async () => {
-    const result = await commands.listDictationWindows();
-    if (result.status === "ok") {
-      setWindows(result.data);
+    try {
+      const result = await commands.listDictationWindows();
+      setWindows(result);
+      setListError("");
+    } catch {
+      setListError(t("settings.debug.targetWindow.listFailed"));
     }
   };
 
@@ -62,30 +66,44 @@ export const TargetWindowSetting: React.FC<TargetWindowProps> = ({
     >
       <div className="flex flex-col gap-2 w-full">
         <div className="text-sm text-text">
-          {target
-            ? `${target.process_name || target.title_substring}${
-                target.enabled ? "" : " (off)"
-              }`
+          {target?.enabled
+            ? t("settings.debug.targetWindow.pastingInto", {
+                name: labelFor({
+                  process_name: target.process_name,
+                  title: target.title_substring,
+                }),
+              })
             : t("settings.debug.targetWindow.empty")}
         </div>
-        <select
-          className="bg-background border border-mid-gray/40 rounded px-2 py-1 text-sm"
-          value=""
-          onChange={(event) => {
-            const index = Number(event.target.value);
-            const window = windows[index];
-            if (window) {
-              void bind(window);
-            }
-          }}
-        >
-          <option value="">{t("settings.debug.targetWindow.refresh")}</option>
-          {windows.map((window, index) => (
-            <option key={`${window.process_name}-${index}`} value={index}>
-              {labelFor(window)}
-            </option>
-          ))}
-        </select>
+        <div className="text-xs text-text/70">
+          {t("settings.debug.targetWindow.windowCount", {
+            count: windows.length,
+          })}
+        </div>
+        {listError ? (
+          <p className="text-xs text-red-500">{listError}</p>
+        ) : null}
+        <div className="max-h-48 w-full overflow-y-auto rounded border border-mid-gray/40">
+          {windows.map((window, index) => {
+            const selected =
+              target?.process_name === window.process_name &&
+              target?.title_substring === window.title;
+            return (
+              <button
+                key={`${window.process_name}-${window.title}-${index}`}
+                type="button"
+                className={`block w-full truncate px-2 py-1 text-left text-sm hover:bg-logo-primary/10 ${
+                  selected ? "bg-logo-primary/20" : ""
+                }`}
+                onClick={() => {
+                  void bind(window);
+                }}
+              >
+                {labelFor(window)}
+              </button>
+            );
+          })}
+        </div>
         <div className="flex flex-wrap gap-2">
           <Button
             type="button"

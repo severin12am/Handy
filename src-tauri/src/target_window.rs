@@ -176,24 +176,22 @@ fn list_snapshots() -> Vec<WindowSnapshot> {
     use std::sync::Mutex;
     use windows::Win32::Foundation::{HWND, LPARAM};
     use windows::core::BOOL;
-    use windows::Win32::UI::WindowsAndMessaging::{
-        EnumWindows, IsWindowVisible,
-    };
+    use windows::Win32::UI::WindowsAndMessaging::EnumWindows;
 
     let found = Mutex::new(Vec::new());
     unsafe extern "system" fn callback(hwnd: HWND, lparam: LPARAM) -> BOOL {
         let found = &*(lparam.0 as *const Mutex<Vec<WindowSnapshot>>);
-        if IsWindowVisible(hwnd).as_bool() {
-            let title = window_title(hwnd);
-            if !title.is_empty() {
-                let process_name = process_name_for(hwnd);
-                if let Ok(mut guard) = found.lock() {
-                    guard.push(WindowSnapshot {
-                        process_name,
-                        title,
-                        hwnd: hwnd.0 as isize,
-                    });
-                }
+        // Minimized windows are not always "visible", but they are still
+        // valid bind targets (we restore them before pasting).
+        let titled = window_title(hwnd);
+        if !titled.is_empty() {
+            let process_name = process_name_for(hwnd);
+            if let Ok(mut guard) = found.lock() {
+                guard.push(WindowSnapshot {
+                    process_name,
+                    title: titled,
+                    hwnd: hwnd.0 as isize,
+                });
             }
         }
         BOOL(1)
