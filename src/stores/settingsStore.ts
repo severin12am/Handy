@@ -162,6 +162,14 @@ const settingUpdaters: {
     commands.changeMuteWhileRecordingSetting(value as boolean),
   append_trailing_space: (value) =>
     commands.changeAppendTrailingSpaceSetting(value as boolean),
+  smart_spacing: (value) =>
+    commands.changeSmartSpacingSetting(value as boolean),
+  voice_commands_enabled: (value) =>
+    commands.changeVoiceCommandsSetting(value as boolean),
+  auto_submit_apps: (value) =>
+    commands.changeAutoSubmitAppsSetting(
+      Array.isArray(value) ? (value as string[]).join(", ") : String(value ?? ""),
+    ),
   log_level: (value) => commands.setLogLevel(value as any),
   app_language: (value) => commands.changeAppLanguageSetting(value as string),
   theme: (value) => commands.changeThemeSetting(value as string),

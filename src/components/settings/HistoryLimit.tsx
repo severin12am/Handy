@@ -17,11 +17,18 @@ export const HistoryLimit: React.FC<HistoryLimitProps> = ({
   const { getSetting, updateSetting, isUpdating } = useSettings();
 
   const historyLimit = getSetting("history_limit") ?? 5;
+  const [draft, setDraft] = React.useState(String(historyLimit));
 
-  const handleChange = async (event: React.ChangeEvent<HTMLInputElement>) => {
-    const value = parseInt(event.target.value, 10);
-    if (!isNaN(value) && value >= 0) {
-      updateSetting("history_limit", value);
+  React.useEffect(() => {
+    setDraft(String(historyLimit));
+  }, [historyLimit]);
+
+  const commit = async () => {
+    const value = parseInt(draft, 10);
+    if (!isNaN(value) && value >= 0 && value !== historyLimit) {
+      await updateSetting("history_limit", value);
+    } else {
+      setDraft(String(historyLimit));
     }
   };
 
@@ -38,8 +45,16 @@ export const HistoryLimit: React.FC<HistoryLimitProps> = ({
           type="number"
           min="0"
           max="1000"
-          value={historyLimit}
-          onChange={handleChange}
+          value={draft}
+          onChange={(event) => setDraft(event.target.value)}
+          onBlur={() => {
+            void commit();
+          }}
+          onKeyDown={(event) => {
+            if (event.key === "Enter") {
+              void commit();
+            }
+          }}
           disabled={isUpdating("history_limit")}
           className="w-20"
         />

@@ -1,6 +1,7 @@
 import React from "react";
 import { useTranslation } from "react-i18next";
 import { Dropdown } from "../ui/Dropdown";
+import { Input } from "../ui/Input";
 import { SettingContainer } from "../ui/SettingContainer";
 import { useSettings } from "../../hooks/useSettings";
 import { useOsType } from "../../hooks/useOsType";
@@ -20,6 +21,11 @@ export const AutoSubmit: React.FC<AutoSubmitProps> = React.memo(
     const { getSetting, updateSetting, isUpdating } = useSettings();
 
     const enabled = getSetting("auto_submit") ?? false;
+    const apps = (getSetting("auto_submit_apps") ?? []).join(", ");
+    const [appsDraft, setAppsDraft] = React.useState(apps);
+    React.useEffect(() => {
+      setAppsDraft(apps);
+    }, [apps]);
     const selectedKey = (getSetting("auto_submit_key") ||
       "enter") as AutoSubmitKey;
     const selectedValue: AutoSubmitOptionValue = enabled ? selectedKey : "off";
@@ -74,6 +80,23 @@ export const AutoSubmit: React.FC<AutoSubmitProps> = React.memo(
           onSelect={handleAutoSubmitSelect}
           disabled={isUpdating("auto_submit") || isUpdating("auto_submit_key")}
         />
+        {enabled && (
+          <Input
+            aria-label={t("settings.advanced.autoSubmit.appsLabel")}
+            placeholder={t("settings.advanced.autoSubmit.appsDescription")}
+            value={appsDraft}
+            onChange={(event) => setAppsDraft(event.target.value)}
+            onBlur={() => {
+              void updateSetting(
+                "auto_submit_apps",
+                appsDraft
+                  .split(/[,\n]/)
+                  .map((part) => part.trim())
+                  .filter((part) => part.length > 0),
+              );
+            }}
+          />
+        )}
       </SettingContainer>
     );
   },

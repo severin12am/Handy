@@ -564,6 +564,9 @@ fn show_overlay_state_on_main(app_handle: &AppHandle, state: &str) {
             };
             let pos_calc_elapsed = pos_started.elapsed() - set_pos_elapsed;
 
+            #[cfg(target_os = "windows")]
+            set_overlay_webview_visible(&overlay_window, true);
+
             let show_started = std::time::Instant::now();
             let _ = overlay_window.show();
             let show_elapsed = show_started.elapsed();
@@ -685,6 +688,16 @@ fn update_overlay_position_on_main(app_handle: &AppHandle) {
 /// the instant it drained, well inside the 300 ms hide delay.
 static OVERLAY_SHOW_GENERATION: AtomicU64 = AtomicU64::new(0);
 
+/// Stop the hidden overlay webview from compositing.
+#[cfg(target_os = "windows")]
+fn set_overlay_webview_visible(window: &tauri::WebviewWindow, visible: bool) {
+    let _ = window.with_webview(move |webview| unsafe {
+        if let Err(error) = webview.controller().SetIsVisible(visible) {
+            log::debug!("Could not set overlay webview visibility: {error}");
+        }
+    });
+}
+
 /// Hides the recording overlay window with fade-out animation
 pub fn hide_recording_overlay(app_handle: &AppHandle) {
     // Always hide the overlay regardless of settings - if setting was changed while recording,
@@ -697,14 +710,27 @@ pub fn hide_recording_overlay(app_handle: &AppHandle) {
         let _ = overlay_window.emit("hide-overlay", ());
         // Hide the window after a short delay to allow animation to complete,
         // unless a newer session has shown the overlay again by then.
-        let window_clone = overlay_window.clone();
+        let app_for_hide = app_handle.clone();
         std::thread::spawn(move || {
             std::thread::sleep(std::time::Duration::from_millis(300));
             if OVERLAY_SHOW_GENERATION.load(Ordering::SeqCst) != scheduled_at {
                 log::debug!("Skipping stale overlay hide: a newer session is showing the overlay");
                 return;
             }
-            let _ = window_clone.hide();
+            let app_for_ui = app_for_hide.clone();
+            let _ = app_for_hide.run_on_main_thread(move || {
+                if OVERLAY_SHOW_GENERATION.load(Ordering::SeqCst) != scheduled_at {
+                    return;
+                }
+                if let Some(window) = app_for_ui.get_webview_window("recording_overlay") {
+                    let _ = window.hide();
+                    // A hidden WebView2 keeps a GPU compositor timer, which ramps
+                    // fans while the lid is closed or the session is locked
+                    // (cjpais/Handy#2162, #1371).
+                    #[cfg(target_os = "windows")]
+                    set_overlay_webview_visible(&window, false);
+                }
+            });
         });
     }
 }

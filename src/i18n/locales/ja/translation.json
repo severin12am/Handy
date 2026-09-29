@@ -355,7 +355,9 @@
           "cmdEnter": "Cmd+Enter",
           "superEnter": "Super+Enter",
           "ctrlEnter": "Ctrl+Enter"
-        }
+        },
+        "appsLabel": "Only in these apps",
+        "appsDescription": "Optional. Comma-separated window titles (Telegram, Discord, Cursor). Empty means every app."
       },
       "translateToEnglish": {
         "label": "英語に翻訳",
@@ -602,6 +604,14 @@
         "permissionsButton": "権限",
         "modelsButton": "モデル選択",
         "exitButton": "プレビューを終了"
+      },
+      "smartSpacing": {
+        "label": "Smart spacing",
+        "description": "Insert a space after . , ! ? : ; when more text follows, and between back-to-back dictations. Never adds a double space."
+      },
+      "voiceCommands": {
+        "label": "Voice commands",
+        "description": "Offline: \"new line\" / \"новая строка\" and \"new paragraph\" / \"новый абзац\" become line breaks."
       }
     },
     "about": {
@@ -682,7 +692,11 @@
     "modelLoadFailedUnknown": "不明なモデル",
     "pasteFailedTitle": "テキストの貼り付けに失敗しました",
     "pasteFailed": "アクティブなアプリにテキストを貼り付けられませんでした。",
-    "transcriptionFailedTitle": "文字起こしに失敗しました"
+    "transcriptionFailedTitle": "文字起こしに失敗しました",
+    "noMicrophoneAudioTitle": "No audio from the microphone",
+    "noMicrophoneAudio": "Handy received digital silence. Check that the correct microphone is selected, unmuted, and not in exclusive use by another app.",
+    "noSpeechTitle": "No speech detected",
+    "noSpeech": "The recording did not contain speech. Try again, or turn off voice activity detection if it is clipping your voice."
   },
   "appLanguage": {
     "title": "アプリの言語",

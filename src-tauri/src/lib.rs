@@ -17,6 +17,7 @@ mod overlay;
 mod paste_tx;
 pub mod portable;
 mod secure_input;
+mod secrets;
 mod settings;
 mod shortcut;
 mod signal_handle;
@@ -320,7 +321,13 @@ fn initialize_core_logic(app_handle: &AppHandle) {
                 cancel_current_operation(app);
             }
             "quit" => {
-                app.exit(0);
+                if let Some(tm) = app.try_state::<Arc<TranscriptionManager>>() {
+                    let _ = tm.unload_model();
+                }
+                // app.exit() leaves the hotkey hook, microphone worker, and
+                // WebView2 processes alive (cjpais/Handy#1005). The Windows job
+                // object kills child processes when this one exits.
+                std::process::exit(0);
             }
             id if id.starts_with("model_select:") => {
                 let model_id = id.strip_prefix("model_select:").unwrap().to_string();
@@ -621,6 +628,9 @@ fn run_headless_transcription(app: &AppHandle, args: &CliArgs) -> i32 {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run(cli_args: CliArgs) {
+    #[cfg(target_os = "windows")]
+    bind_kill_on_close_job();
+
     // Avoid ggml-metal residency-set teardown assertions when a native engine
     // outlives the Tauri shutdown sequence (#1902). This must happen before
     // transcribe-cpp initializes its Metal device. Advanced users can restore
@@ -691,6 +701,9 @@ pub fn run(cli_args: CliArgs) {
             shortcut::resume_all_bindings,
             shortcut::change_mute_while_recording_setting,
             shortcut::change_append_trailing_space_setting,
+            shortcut::change_smart_spacing_setting,
+            shortcut::change_voice_commands_setting,
+            shortcut::change_auto_submit_apps_setting,
             shortcut::change_lazy_stream_close_setting,
             shortcut::change_vad_enabled_setting,
             shortcut::change_vad_backend_setting,
@@ -895,6 +908,16 @@ pub fn run(cli_args: CliArgs) {
             );
 
             specta_builder.mount_events(app);
+
+            // The asset protocol used to allow `**`, which let the webview read
+            // any file the process could (cjpais/Handy#1384). Config scope is
+            // the app data folders; portable mode lives next to the executable,
+            // so allow that directory explicitly too.
+            if let Ok(dir) = portable::app_data_dir(app.handle()) {
+                if let Err(error) = app.asset_protocol_scope().allow_directory(&dir, true) {
+                    log::warn!("Could not scope asset protocol to app data: {error}");
+                }
+            }
 
             // Headless one-shot path (`--transcribe-file` / `--list-devices` /
             // `--list-models`): initialize only what transcription needs — the
@@ -1119,4 +1142,35 @@ pub fn run(cli_args: CliArgs) {
         }
         _ => {}
     });
+}
+
+/// Put the process in a job that kills child processes (WebView2) on exit.
+/// Fixes Handy staying in Task Manager after Quit (cjpais/Handy#1005).
+#[cfg(target_os = "windows")]
+fn bind_kill_on_close_job() {
+    use windows::Win32::System::JobObjects::{
+        AssignProcessToJobObject, CreateJobObjectW, SetInformationJobObject,
+        JobObjectExtendedLimitInformation, JOBOBJECT_EXTENDED_LIMIT_INFORMATION,
+        JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
+    };
+    use windows::Win32::System::Threading::GetCurrentProcess;
+
+    unsafe {
+        let Ok(job) = CreateJobObjectW(None, None) else {
+            return;
+        };
+        let mut info = JOBOBJECT_EXTENDED_LIMIT_INFORMATION::default();
+        info.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+        let _ = SetInformationJobObject(
+            job,
+            JobObjectExtendedLimitInformation,
+            &info as *const _ as *const core::ffi::c_void,
+            std::mem::size_of_val(&info) as u32,
+        );
+        let _ = AssignProcessToJobObject(job, GetCurrentProcess());
+        // HANDLE is Copy and has no destructor, so this kernel handle stays
+        // open until process exit. JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE then
+        // reaps WebView2 children (cjpais/Handy#1005).
+        let _ = job;
+    }
 }

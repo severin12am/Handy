@@ -355,7 +355,9 @@
           "cmdEnter": "Cmd+Enter",
           "superEnter": "Super+Enter",
           "ctrlEnter": "Ctrl+Enter"
-        }
+        },
+        "appsLabel": "Only in these apps",
+        "appsDescription": "Optional. Comma-separated window titles (Telegram, Discord, Cursor). Empty means every app."
       },
       "translateToEnglish": {
         "label": "영어로 번역",
@@ -602,6 +604,14 @@
         "permissionsButton": "권한",
         "modelsButton": "모델 선택",
         "exitButton": "미리보기 종료"
+      },
+      "smartSpacing": {
+        "label": "Smart spacing",
+        "description": "Insert a space after . , ! ? : ; when more text follows, and between back-to-back dictations. Never adds a double space."
+      },
+      "voiceCommands": {
+        "label": "Voice commands",
+        "description": "Offline: \"new line\" / \"новая строка\" and \"new paragraph\" / \"новый абзац\" become line breaks."
       }
     },
     "about": {
@@ -682,7 +692,11 @@
     "modelLoadFailedUnknown": "알 수 없는 모델",
     "pasteFailedTitle": "텍스트 붙여넣기 실패",
     "pasteFailed": "활성 애플리케이션에 텍스트를 붙여넣을 수 없습니다.",
-    "transcriptionFailedTitle": "음성 인식 실패"
+    "transcriptionFailedTitle": "음성 인식 실패",
+    "noMicrophoneAudioTitle": "No audio from the microphone",
+    "noMicrophoneAudio": "Handy received digital silence. Check that the correct microphone is selected, unmuted, and not in exclusive use by another app.",
+    "noSpeechTitle": "No speech detected",
+    "noSpeech": "The recording did not contain speech. Try again, or turn off voice activity detection if it is clipping your voice."
   },
   "appLanguage": {
     "title": "애플리케이션 언어",

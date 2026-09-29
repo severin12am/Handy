@@ -1,11 +1,12 @@
 use crate::audio_toolkit::{
-    apply_custom_words, detect_output_language, normalize_transcription_output,
-    remove_filler_words, OutputLanguageEvidence,
+    apply_custom_words, apply_voice_commands, chunk_audio_at_silence, detect_output_language,
+    ensure_space_after_punctuation, join_transcript_chunks, normalize_transcription_output,
+    remove_filler_words, strip_unk_tokens, OutputLanguageEvidence,
 };
 use crate::managers::audio::AudioRecordingManager;
 use crate::managers::model::{EngineType, ModelManager};
 use crate::settings::{
-    get_settings, AppSettings, ModelUnloadTimeout, OrtAcceleratorSetting,
+    get_settings, write_settings, AppSettings, ModelUnloadTimeout, OrtAcceleratorSetting,
     TranscribeAcceleratorSetting,
 };
 use anyhow::Result;
@@ -37,7 +38,11 @@ use transcribe_rs::{
 };
 
 const STREAM_PERF_LOG_INTERVAL: Duration = Duration::from_secs(5);
-const STREAM_FINALIZE_REPLY_TIMEOUT: Duration = Duration::from_secs(30);
+/// Live finalize used to give up after 30s. A Vulkan reload after idle unload
+/// can take ~70s on NVIDIA (cjpais/Handy#1841); bailing out then dropped the
+/// transcript with no result. Three minutes covers that reload. The error path
+/// still surfaces a timeout instead of returning empty text.
+const STREAM_FINALIZE_REPLY_TIMEOUT: Duration = Duration::from_secs(180);
 
 fn panic_payload_message(payload: &(dyn std::any::Any + Send)) -> String {
     if let Some(message) = payload.downcast_ref::<&str>() {
@@ -588,11 +593,16 @@ impl TranscriptionManager {
                     .as_ref()
                     .map(transcribe_device_label)
                     .unwrap_or_else(|| "automatic".to_string());
-                let model_options = ModelOptions { backend, device };
-                let model = Model::load_with(&model_path, &model_options).map_err(|e| {
-                    let error_msg = format!("Failed to load whisper model {}: {}", model_id, e);
-                    emit_loading_failed(&error_msg);
-                    anyhow::anyhow!(error_msg)
+                let model = load_whisper_model_with_cpu_fallback(
+                    &self.app_handle,
+                    model_id,
+                    &model_path,
+                    backend,
+                    device,
+                )
+                .map_err(|e| {
+                    emit_loading_failed(&e.to_string());
+                    e
                 })?;
                 // The bound backend may differ from the request (e.g. CPU
                 // fallback under Auto); log what actually loaded.
@@ -1340,38 +1350,57 @@ impl TranscriptionManager {
                             run_options.family.is_some()
                         );
 
-                        session
-                            .run(&audio, &run_options)
-                            .map(|t| {
-                                // Whisper's audio-based LID (auto mode only;
-                                // `None` when a language hint was passed).
-                                model_detected_language = t.language;
-                                t.text
-                            })
-                            .map_err(|e| {
-                                anyhow::anyhow!("transcribe-cpp transcription failed: {}", e)
-                            })
+                        let mut saw_language = false;
+                        run_chunked(&audio, |chunk| {
+                            session
+                                .run(chunk, &run_options)
+                                .map(|t| {
+                                    if !saw_language {
+                                        // Whisper's audio-based LID (auto mode only;
+                                        // `None` when a language hint was passed).
+                                        model_detected_language = t.language;
+                                        saw_language = true;
+                                    }
+                                    t.text
+                                })
+                                .map_err(|e| {
+                                    anyhow::anyhow!("transcribe-cpp transcription failed: {}", e)
+                                })
+                        })
                     }
                     LoadedEngine::Parakeet(parakeet_engine) => {
                         let params = ParakeetParams {
                             timestamp_granularity: Some(TimestampGranularity::Segment),
                             ..Default::default()
                         };
-                        parakeet_engine
-                            .transcribe_with(&audio, &params)
-                            .map(|r| r.text)
-                            .map_err(|e| anyhow::anyhow!("Parakeet transcription failed: {}", e))
+                        run_chunked(&audio, |chunk| {
+                            parakeet_engine
+                                .transcribe_with(chunk, &params)
+                                .map(|r| r.text)
+                                .map_err(|e| anyhow::anyhow!("Parakeet transcription failed: {}", e))
+                        })
                     }
-                    LoadedEngine::Moonshine(moonshine_engine) => moonshine_engine
-                        .transcribe(&audio, &TranscribeOptions::default())
-                        .map(|r| r.text)
-                        .map_err(|e| anyhow::anyhow!("Moonshine transcription failed: {}", e)),
-                    LoadedEngine::MoonshineStreaming(streaming_engine) => streaming_engine
-                        .transcribe(&audio, &TranscribeOptions::default())
-                        .map(|r| r.text)
-                        .map_err(|e| {
-                            anyhow::anyhow!("Moonshine streaming transcription failed: {}", e)
-                        }),
+                    LoadedEngine::Moonshine(moonshine_engine) => {
+                        run_chunked(&audio, |chunk| {
+                            moonshine_engine
+                                .transcribe(chunk, &TranscribeOptions::default())
+                                .map(|r| r.text)
+                                .map_err(|e| anyhow::anyhow!("Moonshine transcription failed: {}", e))
+                        })
+                    }
+                    LoadedEngine::MoonshineStreaming(streaming_engine) => {
+                        run_chunked(&audio, |chunk| {
+                            streaming_engine
+                                .transcribe(chunk, &TranscribeOptions::default())
+                                .map(|r| r.text)
+                                .map_err(|e| {
+                                    anyhow::anyhow!(
+                                        "Moonshine streaming transcription failed: {}",
+                                        e
+                                    )
+                                })
+                        })
+                    }
                     LoadedEngine::SenseVoice(sense_voice_engine) => {
                         let language = match normalize_cjk_language(&validated_language) {
                             "zh" => Some("zh".to_string()),
@@ -1386,15 +1415,21 @@ impl TranscriptionManager {
                             language,
                             use_itn: Some(true),
                         };
-                        sense_voice_engine
-                            .transcribe_with(&audio, &params)
-                            .map(|r| r.text)
-                            .map_err(|e| anyhow::anyhow!("SenseVoice transcription failed: {}", e))
+                        run_chunked(&audio, |chunk| {
+                            sense_voice_engine
+                                .transcribe_with(chunk, &params)
+                                .map(|r| r.text)
+                                .map_err(|e| {
+                                    anyhow::anyhow!("SenseVoice transcription failed: {}", e)
+                                })
+                        })
                     }
-                    LoadedEngine::GigaAM(gigaam_engine) => gigaam_engine
-                        .transcribe(&audio, &TranscribeOptions::default())
-                        .map(|r| r.text)
-                        .map_err(|e| anyhow::anyhow!("GigaAM transcription failed: {}", e)),
+                    LoadedEngine::GigaAM(gigaam_engine) => run_chunked(&audio, |chunk| {
+                        gigaam_engine
+                            .transcribe(chunk, &TranscribeOptions::default())
+                            .map(|r| r.text)
+                            .map_err(|e| anyhow::anyhow!("GigaAM transcription failed: {}", e))
+                    }),
                     LoadedEngine::Canary(canary_engine) => {
                         output_was_translated = settings.translate_to_english;
                         let lang = if validated_language == "auto" {
@@ -1408,10 +1443,12 @@ impl TranscriptionManager {
                             translate: settings.translate_to_english,
                             ..Default::default()
                         };
-                        canary_engine
-                            .transcribe(&audio, &options)
-                            .map(|r| r.text)
-                            .map_err(|e| anyhow::anyhow!("Canary transcription failed: {}", e))
+                        run_chunked(&audio, |chunk| {
+                            canary_engine
+                                .transcribe(chunk, &options)
+                                .map(|r| r.text)
+                                .map_err(|e| anyhow::anyhow!("Canary transcription failed: {}", e))
+                        })
                     }
                     LoadedEngine::Cohere(cohere_engine) => {
                         let lang = if validated_language == "auto" {
@@ -1424,10 +1461,12 @@ impl TranscriptionManager {
                             language: lang,
                             ..Default::default()
                         };
-                        cohere_engine
-                            .transcribe(&audio, &options)
-                            .map(|r| r.text)
-                            .map_err(|e| anyhow::anyhow!("Cohere transcription failed: {}", e))
+                        run_chunked(&audio, |chunk| {
+                            cohere_engine
+                                .transcribe(chunk, &options)
+                                .map(|r| r.text)
+                                .map_err(|e| anyhow::anyhow!("Cohere transcription failed: {}", e))
+                        })
                     }
                 }
             }));
@@ -1766,6 +1805,90 @@ fn transcribe_cpp_run_plan(
     }
 }
 
+fn run_chunked(
+    audio: &[f32],
+    mut run_chunk: impl FnMut(&[f32]) -> Result<String>,
+) -> Result<String> {
+    let spans = chunk_audio_at_silence(audio, 16_000);
+    if spans.len() <= 1 {
+        return run_chunk(audio);
+    }
+    info!(
+        "Splitting {:.1}s of audio into {} chunks so a long recording is not dropped (cjpais/Handy#1332)",
+        audio.len() as f32 / 16_000.0,
+        spans.len()
+    );
+    let mut parts = Vec::with_capacity(spans.len());
+    for (start, end) in spans {
+        parts.push(run_chunk(&audio[start..end])?);
+    }
+    Ok(join_transcript_chunks(&parts))
+}
+
+fn is_gpu_backend_failure(message: &str) -> bool {
+    let message = message.to_ascii_lowercase();
+    message.contains("device lost")
+        || message.contains("devicelost")
+        || message.contains("vulkan")
+        || message.contains("vk::")
+        || message.contains("no device")
+        || message.contains("failed to create device")
+        || message.contains("errordevicelost")
+}
+
+fn remember_cpu_accelerator(app: &AppHandle) {
+    let mut settings = get_settings(app);
+    if settings.transcribe_accelerator == TranscribeAcceleratorSetting::Cpu {
+        return;
+    }
+    settings.transcribe_accelerator = TranscribeAcceleratorSetting::Cpu;
+    settings.transcribe_gpu_device = None;
+    write_settings(app, settings);
+    warn!("Saved transcribe accelerator = CPU after a GPU backend failure");
+}
+
+fn load_whisper_model_with_cpu_fallback(
+    app: &AppHandle,
+    model_id: &str,
+    model_path: &std::path::Path,
+    backend: Backend,
+    device: Option<transcribe_cpp::Device>,
+) -> Result<Model> {
+    let retry_on_cpu = backend != Backend::Cpu;
+    let attempt = |backend: Backend, device: Option<transcribe_cpp::Device>| {
+        let options = ModelOptions { backend, device };
+        catch_unwind(AssertUnwindSafe(|| Model::load_with(model_path, &options)))
+    };
+
+    let fallback = |app: &AppHandle, why: &str| -> Result<Model> {
+        warn!("{why}; retrying on CPU (cjpais/Handy#1755, #2047, #2129)");
+        remember_cpu_accelerator(app);
+        match attempt(Backend::Cpu, None) {
+            Ok(Ok(model)) => Ok(model),
+            Ok(Err(err)) => Err(anyhow::anyhow!(
+                "Failed to load whisper model {model_id} on CPU after GPU failure: {err}"
+            )),
+            Err(_) => Err(anyhow::anyhow!(
+                "Failed to load whisper model {model_id}: CPU fallback panicked"
+            )),
+        }
+    };
+
+    match attempt(backend, device) {
+        Ok(Ok(model)) => Ok(model),
+        Ok(Err(err)) if retry_on_cpu && is_gpu_backend_failure(&err.to_string()) => {
+            fallback(app, &format!("GPU whisper load failed ({err})"))
+        }
+        Ok(Err(err)) => Err(anyhow::anyhow!(
+            "Failed to load whisper model {model_id}: {err}"
+        )),
+        Err(_) if retry_on_cpu => fallback(app, "GPU whisper load panicked"),
+        Err(_) => Err(anyhow::anyhow!(
+            "Failed to load whisper model {model_id}: loader panicked"
+        )),
+    }
+}
+
 fn post_process_transcription_text(
     raw: String,
     settings: &AppSettings,
@@ -1810,7 +1933,18 @@ fn post_process_transcription_text(
             settings.filler_word_removal_enabled,
         );
 
-        normalize_transcription_output(&without_fillers)
+        let without_unk = strip_unk_tokens(&without_fillers);
+        let with_commands = if settings.voice_commands_enabled {
+            apply_voice_commands(&without_unk)
+        } else {
+            without_unk
+        };
+        let normalized = normalize_transcription_output(&with_commands);
+        if settings.smart_spacing {
+            ensure_space_after_punctuation(&normalized)
+        } else {
+            normalized
+        }
     })
 }
 

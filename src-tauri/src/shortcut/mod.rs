@@ -1216,12 +1216,14 @@ pub async fn fetch_post_process_models(
         }
     }
 
-    // Get API key
-    let api_key = settings
-        .post_process_api_keys
-        .get(&provider_id)
-        .cloned()
-        .unwrap_or_default();
+    let api_key = crate::secrets::resolve_api_key(
+        &provider_id,
+        settings
+            .post_process_api_keys
+            .get(&provider_id)
+            .map(String::as_str)
+            .unwrap_or(""),
+    );
 
     // Skip fetching if no API key for providers that typically need one
     if api_key.trim().is_empty() && provider.id != "custom" {
@@ -1263,6 +1265,37 @@ pub fn change_mute_while_recording_setting(app: AppHandle, enabled: bool) -> Res
 pub fn change_append_trailing_space_setting(app: AppHandle, enabled: bool) -> Result<(), String> {
     let mut settings = settings::get_settings(&app);
     settings.append_trailing_space = enabled;
+    settings::write_settings(&app, settings);
+    Ok(())
+}
+
+#[tauri::command]
+#[specta::specta]
+pub fn change_smart_spacing_setting(app: AppHandle, enabled: bool) -> Result<(), String> {
+    let mut settings = settings::get_settings(&app);
+    settings.smart_spacing = enabled;
+    settings::write_settings(&app, settings);
+    Ok(())
+}
+
+#[tauri::command]
+#[specta::specta]
+pub fn change_voice_commands_setting(app: AppHandle, enabled: bool) -> Result<(), String> {
+    let mut settings = settings::get_settings(&app);
+    settings.voice_commands_enabled = enabled;
+    settings::write_settings(&app, settings);
+    Ok(())
+}
+
+#[tauri::command]
+#[specta::specta]
+pub fn change_auto_submit_apps_setting(app: AppHandle, apps: String) -> Result<(), String> {
+    let mut settings = settings::get_settings(&app);
+    settings.auto_submit_apps = apps
+        .split([',', '\n'])
+        .map(|part| part.trim().to_string())
+        .filter(|part| !part.is_empty())
+        .collect();
     settings::write_settings(&app, settings);
     Ok(())
 }

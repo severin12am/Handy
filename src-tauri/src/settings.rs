@@ -461,6 +461,16 @@ pub struct AppSettings {
     pub mute_while_recording: bool,
     #[serde(default)]
     pub append_trailing_space: bool,
+    /// Space after punctuation and between back-to-back dictations.
+    #[serde(default = "default_smart_spacing")]
+    pub smart_spacing: bool,
+    /// Offline "new line" / "new paragraph" (and Russian equivalents).
+    #[serde(default)]
+    pub voice_commands_enabled: bool,
+    /// When non-empty, auto-submit only fires if the foreground window title
+    /// contains one of these substrings. Empty keeps the global toggle.
+    #[serde(default)]
+    pub auto_submit_apps: Vec<String>,
     #[serde(default = "default_app_language")]
     pub app_language: String,
     #[serde(default = "default_theme")]
@@ -477,10 +487,12 @@ pub struct AppSettings {
     pub paste_delay_ms: u64,
     #[serde(default = "default_paste_delay_after_ms")]
     pub paste_delay_after_ms: u64,
-    /// Debug-gated ("beta") receipt-sequenced paste: restore the clipboard only
-    /// after the target app actually reads the transcript, instead of after a
-    /// fixed delay. See `paste_tx`. macOS and Windows only.
-    #[serde(default)]
+    /// Receipt-sequenced paste: restore the clipboard only after the target app
+    /// actually reads the transcript, instead of after a fixed delay. See
+    /// `paste_tx`. This is the fix for pasting the previous clipboard contents
+    /// (cjpais/Handy#502). macOS and Windows only; the debug screen can turn it
+    /// off. Stores from before schema 3 persisted the old default of false.
+    #[serde(default = "default_reliable_paste")]
     pub reliable_paste: bool,
     #[serde(default = "default_typing_tool")]
     pub typing_tool: TypingTool,
@@ -520,7 +532,7 @@ fn default_model() -> String {
     "".to_string()
 }
 
-const CURRENT_SETTINGS_SCHEMA_VERSION: u32 = 2;
+const CURRENT_SETTINGS_SCHEMA_VERSION: u32 = 3;
 
 fn default_settings_schema_version() -> u32 {
     CURRENT_SETTINGS_SCHEMA_VERSION
@@ -607,6 +619,14 @@ fn default_paste_delay_after_ms() -> u64 {
 
 fn default_auto_submit() -> bool {
     false
+}
+
+fn default_smart_spacing() -> bool {
+    true
+}
+
+fn default_reliable_paste() -> bool {
+    true
 }
 
 fn default_history_limit() -> usize {
@@ -950,6 +970,9 @@ pub fn get_default_settings() -> AppSettings {
         post_process_selected_prompt_id: None,
         mute_while_recording: false,
         append_trailing_space: false,
+        smart_spacing: default_smart_spacing(),
+        voice_commands_enabled: false,
+        auto_submit_apps: Vec::new(),
         app_language: default_app_language(),
         theme: default_theme(),
         experimental_enabled: false,
@@ -958,7 +981,7 @@ pub fn get_default_settings() -> AppSettings {
         show_tray_icon: default_show_tray_icon(),
         paste_delay_ms: default_paste_delay_ms(),
         paste_delay_after_ms: default_paste_delay_after_ms(),
-        reliable_paste: false,
+        reliable_paste: true,
         typing_tool: default_typing_tool(),
         external_script_path: None,
         filler_word_removal_enabled: default_filler_word_removal_enabled(),
@@ -1155,6 +1178,13 @@ fn apply_settings_migrations(
         // transcribe.cpp 0.2 replaced integer registry indices with opaque
         // process-local handles. Clear every old index once.
         settings.transcribe_gpu_device = default_transcribe_gpu_device();
+        updated = true;
+    }
+    if stored_schema_version < 3 {
+        // The receipt-sequenced paste path existed but defaulted off, so the
+        // clipboard race in #502 kept winning. Turn it on once; a later opt-out
+        // is stored at schema 3 and left alone.
+        settings.reliable_paste = true;
         settings.settings_schema_version = CURRENT_SETTINGS_SCHEMA_VERSION;
         updated = true;
     }
@@ -1207,6 +1237,7 @@ pub fn update_checks_effectively_enabled(settings: &AppSettings) -> bool {
 }
 
 pub fn write_settings(app: &AppHandle, settings: AppSettings) {
+    crate::secrets::backup_api_keys(&settings);
     let store = app
         .store(crate::portable::store_path(SETTINGS_STORE_PATH))
         .expect("Failed to initialize store");

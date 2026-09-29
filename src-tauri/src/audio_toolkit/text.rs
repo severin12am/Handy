@@ -316,6 +316,9 @@ fn gated_filler_words_for_language(lang: &str) -> &'static [&'static str] {
         "en" => &["um", "ah", "eh"],
         "de" => &["äh", "ähm"],
         "fr" => &["euh"],
+        // Russian fillers. "ну" and "типа" are sometimes real words; they are
+        // gated on Russian output so other languages are left alone.
+        "ru" => &["ну", "ээ", "эээ", "эм", "типа"],
         _ => &[],
     }
 }
@@ -474,6 +477,192 @@ pub fn normalize_transcription_output(text: &str) -> String {
 
     // Trim leading/trailing whitespace
     normalized.trim().to_string()
+}
+
+/// Peak below this is digital silence, not a quiet room. 1e-3 is about -60 dBFS.
+pub const DIGITAL_SILENCE_PEAK: f32 = 1.0e-3;
+
+pub fn is_digital_silence(peak_abs: f32) -> bool {
+    !peak_abs.is_finite() || peak_abs < DIGITAL_SILENCE_PEAK
+}
+
+static UNK_TOKEN: Lazy<Regex> = Lazy::new(|| Regex::new(r"(?i)</?unk>").unwrap());
+
+/// Drop `<unk>` tokens some models emit literally (cjpais/Handy#2145).
+pub fn strip_unk_tokens(text: &str) -> String {
+    let stripped = UNK_TOKEN.replace_all(text, " ");
+    MULTI_SPACE_PATTERN
+        .replace_all(stripped.trim(), " ")
+        .trim()
+        .to_string()
+}
+
+/// Insert a single space after sentence punctuation when a letter follows.
+/// Digits are left alone so `3.14` stays intact. Existing spaces are kept.
+/// Implemented without regex look-ahead; this crate's `regex` build does not
+/// enable it.
+pub fn ensure_space_after_punctuation(text: &str) -> String {
+    let mut out = String::with_capacity(text.len() + 8);
+    let mut chars = text.chars().peekable();
+    while let Some(ch) = chars.next() {
+        out.push(ch);
+        if matches!(ch, '.' | '!' | '?' | ',' | ':' | ';') {
+            if chars.peek().is_some_and(|next| next.is_alphabetic()) {
+                out.push(' ');
+            }
+        }
+    }
+    out
+}
+
+/// Prepend one space when `previous` is a non-space character and `text`
+/// starts with a letter or digit. Never produces a double space.
+pub fn ensure_leading_separator(text: &str, previous: Option<char>) -> String {
+    let Some(prev) = previous else {
+        return text.to_string();
+    };
+    if prev.is_whitespace() {
+        return text.to_string();
+    }
+    let Some(first) = text.chars().next() else {
+        return text.to_string();
+    };
+    if first.is_whitespace() || !first.is_alphanumeric() {
+        return text.to_string();
+    }
+    format!(" {text}")
+}
+
+/// Offline voice commands. Longer phrases run first so "new paragraph" is not
+/// partly consumed as "new line".
+pub fn apply_voice_commands(text: &str) -> String {
+    let text = replace_bounded_phrase(text, "new paragraph", "\n\n");
+    let text = replace_bounded_phrase(&text, "новый абзац", "\n\n");
+    let text = replace_bounded_phrase(&text, "new line", "\n");
+    replace_bounded_phrase(&text, "новая строка", "\n")
+}
+
+fn replace_bounded_phrase(text: &str, phrase: &str, replacement: &str) -> String {
+    let chars: Vec<char> = text.chars().collect();
+    let phrase: Vec<char> = phrase.chars().collect();
+    if phrase.is_empty() || chars.len() < phrase.len() {
+        return text.to_string();
+    }
+    let mut out = String::new();
+    let mut i = 0;
+    while i < chars.len() {
+        let end = i + phrase.len();
+        let matches = end <= chars.len()
+            && chars[i..end].iter().zip(&phrase).all(|(got, want)| {
+                got.to_lowercase().to_string() == want.to_lowercase().to_string()
+            });
+        let boundary_before = i == 0 || !chars[i - 1].is_alphabetic();
+        let boundary_after = end >= chars.len() || !chars[end].is_alphabetic();
+        if matches && boundary_before && boundary_after {
+            out.push_str(replacement);
+            i = end;
+        } else {
+            out.push(chars[i]);
+            i += 1;
+        }
+    }
+    out
+}
+
+/// Split `audio` (16 kHz mono) into spans of at most 25s, preferring the
+/// quietest 100 ms window near each boundary so words are less likely to be cut.
+pub fn chunk_audio_spans(len: usize, sample_rate: usize) -> Vec<(usize, usize)> {
+    let max_len = sample_rate.saturating_mul(25).max(1);
+    if len <= max_len {
+        return vec![(0, len)];
+    }
+    let mut spans = Vec::new();
+    let mut start = 0usize;
+    while start < len {
+        let hard_end = (start + max_len).min(len);
+        if hard_end == len {
+            spans.push((start, hard_end));
+            break;
+        }
+        spans.push((start, hard_end));
+        start = hard_end;
+    }
+    spans
+}
+
+/// Like [`chunk_audio_spans`], but moves each cut (except the last) to the
+/// quietest short window in the final 3 seconds of the chunk.
+pub fn chunk_audio_at_silence(samples: &[f32], sample_rate: usize) -> Vec<(usize, usize)> {
+    let rough = chunk_audio_spans(samples.len(), sample_rate);
+    if rough.len() <= 1 {
+        return rough;
+    }
+    let window = (sample_rate / 10).max(1);
+    let search = sample_rate.saturating_mul(3);
+    let mut spans = Vec::with_capacity(rough.len());
+    let mut start = 0usize;
+    for (index, &(_, hard_end)) in rough.iter().enumerate() {
+        let end = if index + 1 == rough.len() {
+            samples.len()
+        } else {
+            quiet_split(samples, start, hard_end, search, window)
+        };
+        if end > start {
+            spans.push((start, end));
+            start = end;
+        }
+    }
+    if start < samples.len() {
+        spans.push((start, samples.len()));
+    }
+    spans
+}
+
+fn quiet_split(
+    samples: &[f32],
+    start: usize,
+    hard_end: usize,
+    search: usize,
+    window: usize,
+) -> usize {
+    let search_from = hard_end.saturating_sub(search).max(start + window);
+    if search_from >= hard_end {
+        return hard_end;
+    }
+    let mut best_at = hard_end;
+    let mut best_energy = f32::MAX;
+    let mut at = search_from;
+    while at + window <= hard_end {
+        let energy: f32 = samples[at..at + window].iter().map(|s| s.abs()).sum();
+        if energy < best_energy {
+            best_energy = energy;
+            best_at = at + window / 2;
+        }
+        at += window;
+    }
+    best_at.clamp(start + 1, hard_end)
+}
+
+pub fn join_transcript_chunks(parts: &[String]) -> String {
+    let mut out = String::new();
+    for part in parts {
+        let part = part.trim();
+        if part.is_empty() {
+            continue;
+        }
+        if !out.is_empty() {
+            let boundary_ok = out
+                .chars()
+                .next_back()
+                .is_some_and(|c| c.is_whitespace())
+                || part.chars().next().is_some_and(|c| c.is_whitespace());
+            if !boundary_ok {
+                out.push(' ');
+            }
+        }
+        out.push_str(part);
+    }
+    out
 }
 
 #[cfg(test)]
@@ -880,5 +1069,55 @@ mod tests {
         let custom_words = vec!["你号".to_string()];
         let result = apply_custom_words(text, &custom_words, 1.0);
         assert_eq!(result, text);
+    }
+
+    #[test]
+    fn spaces_after_punctuation_without_splitting_decimals() {
+        assert_eq!(
+            ensure_space_after_punctuation("Привет.Мир 3.14 done!Next"),
+            "Привет. Мир 3.14 done! Next"
+        );
+        assert_eq!(
+            ensure_space_after_punctuation("Hello. World"),
+            "Hello. World"
+        );
+    }
+
+    #[test]
+    fn leading_separator_avoids_double_spaces() {
+        assert_eq!(ensure_leading_separator("hello", Some('d')), " hello");
+        assert_eq!(ensure_leading_separator(" hello", Some('d')), " hello");
+        assert_eq!(ensure_leading_separator("hello", Some(' ')), "hello");
+        assert_eq!(ensure_leading_separator(".hello", Some('d')), ".hello");
+    }
+
+    #[test]
+    fn strips_unk_tokens() {
+        assert_eq!(strip_unk_tokens("hello <unk> world"), "hello world");
+        assert_eq!(strip_unk_tokens("<UNK>"), "");
+    }
+
+    #[test]
+    fn voice_commands_insert_breaks() {
+        assert_eq!(
+            apply_voice_commands("hello new line world new paragraph next"),
+            "hello \n world \n\n next"
+        );
+        assert_eq!(
+            apply_voice_commands("привет новая строка мир"),
+            "привет \n мир"
+        );
+    }
+
+    #[test]
+    fn long_audio_is_split_into_bounded_spans() {
+        let spans = chunk_audio_spans(16_000 * 70, 16_000);
+        assert!(spans.len() >= 3);
+        assert_eq!(spans.first().unwrap().0, 0);
+        assert_eq!(spans.last().unwrap().1, 16_000 * 70);
+        for (start, end) in &spans {
+            assert!(end - start <= 16_000 * 25);
+            assert!(end > start);
+        }
     }
 }

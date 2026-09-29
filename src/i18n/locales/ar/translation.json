@@ -332,7 +332,9 @@
           "cmdEnter": "Cmd+Enter",
           "superEnter": "Super+Enter",
           "ctrlEnter": "Ctrl+Enter"
-        }
+        },
+        "appsLabel": "Only in these apps",
+        "appsDescription": "Optional. Comma-separated window titles (Telegram, Discord, Cursor). Empty means every app."
       },
       "translateToEnglish": {
         "label": "الترجمة إلى الإنجليزية",
@@ -579,6 +581,14 @@
         "permissionsButton": "الأذونات",
         "modelsButton": "اختيار النموذج",
         "exitButton": "إنهاء المعاينة"
+      },
+      "smartSpacing": {
+        "label": "Smart spacing",
+        "description": "Insert a space after . , ! ? : ; when more text follows, and between back-to-back dictations. Never adds a double space."
+      },
+      "voiceCommands": {
+        "label": "Voice commands",
+        "description": "Offline: \"new line\" / \"новая строка\" and \"new paragraph\" / \"новый абзац\" become line breaks."
       }
     },
     "about": {
@@ -682,7 +692,11 @@
     "modelLoadFailedUnknown": "نموذج غير معروف",
     "pasteFailedTitle": "فشل لصق النص",
     "pasteFailed": "تعذر لصق النص في التطبيق النشط.",
-    "transcriptionFailedTitle": "فشل التفريغ النصي"
+    "transcriptionFailedTitle": "فشل التفريغ النصي",
+    "noMicrophoneAudioTitle": "No audio from the microphone",
+    "noMicrophoneAudio": "Handy received digital silence. Check that the correct microphone is selected, unmuted, and not in exclusive use by another app.",
+    "noSpeechTitle": "No speech detected",
+    "noSpeech": "The recording did not contain speech. Try again, or turn off voice activity detection if it is clipping your voice."
   },
   "appLanguage": {
     "title": "لغة التطبيق",

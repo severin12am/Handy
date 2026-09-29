@@ -7,7 +7,8 @@ use log::info;
 use std::process::Command;
 #[cfg(target_os = "linux")]
 use std::sync::OnceLock;
-use std::time::Duration;
+use std::sync::Mutex;
+use std::time::{Duration, Instant};
 use tauri::{AppHandle, Manager};
 use tauri_plugin_clipboard_manager::ClipboardExt;
 
@@ -26,6 +27,88 @@ fn with_enigo<T>(
         .lock()
         .map_err(|e| format!("Failed to lock Enigo: {}", e))?;
     f(&mut enigo)
+}
+
+struct LastInsertion {
+    at: Instant,
+    last_char: char,
+}
+
+static LAST_INSERTION: Mutex<Option<LastInsertion>> = Mutex::new(None);
+
+fn recent_insertion_char() -> Option<char> {
+    let guard = LAST_INSERTION.lock().ok()?;
+    let last = guard.as_ref()?;
+    if last.at.elapsed() > Duration::from_secs(20) {
+        return None;
+    }
+    Some(last.last_char)
+}
+
+fn remember_insertion(text: &str) {
+    let Some(last_char) = text.chars().next_back() else {
+        return;
+    };
+    if let Ok(mut guard) = LAST_INSERTION.lock() {
+        *guard = Some(LastInsertion {
+            at: Instant::now(),
+            last_char,
+        });
+    }
+}
+
+fn auto_submit_allowed(settings: &crate::settings::AppSettings) -> bool {
+    if !settings.auto_submit || settings.auto_submit_apps.is_empty() {
+        return settings.auto_submit;
+    }
+    let Some(title) = foreground_window_title() else {
+        return true;
+    };
+    let title = title.to_lowercase();
+    settings.auto_submit_apps.iter().any(|app| {
+        let app = app.trim().to_lowercase();
+        !app.is_empty() && title.contains(&app)
+    })
+}
+
+fn foreground_window_title() -> Option<String> {
+    #[cfg(target_os = "windows")]
+    {
+        use windows::Win32::UI::WindowsAndMessaging::{
+            GetForegroundWindow, GetWindowTextLengthW, GetWindowTextW,
+        };
+        unsafe {
+            let hwnd = GetForegroundWindow();
+            if hwnd.is_invalid() {
+                return None;
+            }
+            let len = GetWindowTextLengthW(hwnd);
+            if len <= 0 {
+                return None;
+            }
+            let mut buf = vec![0u16; (len as usize) + 1];
+            let copied = GetWindowTextW(hwnd, &mut buf);
+            if copied <= 0 {
+                return None;
+            }
+            return Some(String::from_utf16_lossy(&buf[..copied as usize]));
+        }
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        None
+    }
+}
+
+fn wait_until_clipboard_has(app_handle: &AppHandle, text: &str, timeout: Duration) -> bool {
+    let started = Instant::now();
+    while started.elapsed() < timeout {
+        if app_handle.clipboard().read_text().ok().as_deref() == Some(text) {
+            return true;
+        }
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    app_handle.clipboard().read_text().ok().as_deref() == Some(text)
 }
 
 fn write_text_to_clipboard(app_handle: &AppHandle, text: &str) -> Result<(), String> {
@@ -70,10 +153,21 @@ fn paste_via_clipboard(
         None
     };
 
-    // Write text to clipboard first
+    // Write text to clipboard first, then wait until a read-back matches.
+    // A fixed sleep loses the race under load and the paste chord fires while
+    // the clipboard still holds the user's previous contents (cjpais/Handy#502).
     write_text_to_clipboard(app_handle, text)?;
 
-    std::thread::sleep(Duration::from_millis(paste_delay_ms));
+    let echoed = wait_until_clipboard_has(
+        app_handle,
+        text,
+        Duration::from_millis(paste_delay_ms.max(400)),
+    );
+    if !echoed {
+        log::warn!(
+            "Clipboard did not echo the transcript within the paste wait; sending the chord anyway"
+        );
+    }
 
     // Capture key injection errors so the original clipboard is restored before
     // propagating them to the caller.
@@ -100,7 +194,13 @@ fn paste_via_clipboard(
         Ok(())
     })();
 
-    finish_clipboard_paste(paste_result, paste_delay_after_ms, || {
+    // Long transcripts take longer for the target to read. Stretch the restore
+    // delay with length so a slow consumer is less likely to see the restored
+    // clipboard (cjpais/Handy#502, #2126). Receipt-sequenced paste is still the
+    // primary fix; this only applies to the legacy fallback.
+    let restore_delay_ms = paste_delay_after_ms
+        .max((text.len() as u64 / 32).clamp(80, 2_000));
+    finish_clipboard_paste(paste_result, restore_delay_ms, || {
         // Restore original clipboard content even when key injection failed.
         // Text takes priority so this path stays identical to the previous behavior;
         // an image is only restored when the clipboard held no text at all, which is
@@ -777,12 +877,21 @@ pub fn paste(text: String, app_handle: AppHandle) -> Result<(), String> {
     let paste_delay_ms = settings.paste_delay_ms;
     let paste_delay_after_ms = settings.paste_delay_after_ms;
 
+    let text = if settings.smart_spacing {
+        crate::audio_toolkit::ensure_leading_separator(&text, recent_insertion_char())
+    } else {
+        text
+    };
     // Append trailing space if setting is enabled
     let text = if settings.append_trailing_space {
         format!("{} ", text)
     } else {
         text
     };
+    if settings.smart_spacing {
+        remember_insertion(&text);
+    }
+    let auto_submit = auto_submit_allowed(&settings);
 
     info!(
         "Using paste method: {:?}, delay before: {}ms, delay after: {}ms",
@@ -816,7 +925,7 @@ pub fn paste(text: String, app_handle: AppHandle) -> Result<(), String> {
                         &app_handle,
                         &paste_method,
                         enigo,
-                        settings.auto_submit,
+                        auto_submit,
                         settings.auto_submit_key,
                         settings.clipboard_handling,
                     )
@@ -846,7 +955,7 @@ pub fn paste(text: String, app_handle: AppHandle) -> Result<(), String> {
         }
     }
 
-    if should_send_auto_submit(settings.auto_submit, paste_method) {
+    if should_send_auto_submit(auto_submit, paste_method) {
         std::thread::sleep(Duration::from_millis(50));
         if let Err(error) = with_enigo(&app_handle, |enigo| {
             send_return_key(enigo, settings.auto_submit_key)

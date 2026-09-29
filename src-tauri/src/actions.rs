@@ -180,11 +180,14 @@ async fn post_process_transcription(settings: &AppSettings, transcription: &str)
         provider.id, model
     );
 
-    let api_key = settings
-        .post_process_api_keys
-        .get(&provider.id)
-        .cloned()
-        .unwrap_or_default();
+    let api_key = crate::secrets::resolve_api_key(
+        &provider.id,
+        settings
+            .post_process_api_keys
+            .get(&provider.id)
+            .map(String::as_str)
+            .unwrap_or(""),
+    );
 
     // Ask these providers to skip reasoning/thinking — post-processing rarely
     // benefits from it and it adds seconds of latency. llm_client picks the
@@ -708,11 +711,37 @@ impl ShortcutAction for TranscribeAction {
                     return;
                 }
 
-                if samples.is_empty() {
-                    debug!("Recording produced no audio samples; skipping persistence");
-                    // Tear down any streaming worker so its channel doesn't leak
-                    // and block the next start_stream.
+                let peak = rm.last_capture_peak();
+                let digital_silence = crate::audio_toolkit::is_digital_silence(peak);
+                if samples.is_empty() || digital_silence {
+                    // Empty after VAD, or the device delivered zeros. Say so
+                    // instead of pasting nothing (cjpais/Handy#1899, #2141).
+                    let code = if digital_silence {
+                        "handy:no-microphone-audio"
+                    } else {
+                        "handy:no-speech"
+                    };
+                    warn!(
+                        "No usable audio (samples={}, peak={peak:.6}); reporting {code}",
+                        samples.len()
+                    );
                     tm.cancel_stream();
+                    if !samples.is_empty() {
+                        let file_name = format!("handy-{}.wav", chrono::Utc::now().timestamp());
+                        let wav_path = hm.recordings_dir().join(&file_name);
+                        if crate::audio_toolkit::save_wav_file(&wav_path, &samples).is_ok() {
+                            if let Err(err) = hm.save_entry(
+                                file_name,
+                                String::new(),
+                                post_process,
+                                None,
+                                None,
+                            ) {
+                                error!("Failed to save silent history entry: {}", err);
+                            }
+                        }
+                    }
+                    let _ = ah.emit("transcription-error", code);
                     utils::hide_recording_overlay(&ah);
                     set_tray_state(&ah, TrayIconState::Idle);
                 } else {

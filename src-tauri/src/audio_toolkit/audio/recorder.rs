@@ -1,7 +1,7 @@
 use std::{
     io::Error,
     sync::{
-        atomic::{AtomicBool, AtomicU64, Ordering},
+        atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering},
         mpsc, Arc, Mutex,
     },
     time::{Duration, Instant},
@@ -28,9 +28,11 @@ enum Cmd {
     Shutdown,
 }
 
-// Two seconds of ring capacity absorbs consumer stalls without adding latency
-// during normal 10 ms drains.
-const AUDIO_RING_SECONDS: usize = 2;
+// Eight seconds of ring capacity absorbs consumer stalls (VAD / resampling)
+// during long recordings without adding latency on the 10 ms drain path.
+// A 2s ring overflowed and silently discarded audio on multi-minute takes
+// (cjpais/Handy#1332).
+const AUDIO_RING_SECONDS: usize = 8;
 const CONSUMER_POLL_INTERVAL: Duration = Duration::from_millis(10);
 const MAX_DRAIN_CHUNK: Duration = Duration::from_millis(50);
 const PAUSE_ACK_TIMEOUT: Duration = Duration::from_secs(2);
@@ -103,6 +105,10 @@ pub struct AudioRecorder {
     config_cache: Arc<Mutex<Option<(String, cpal::SupportedStreamConfig)>>>,
     /// Set by cpal when the active input stream can no longer capture.
     stream_error: Arc<AtomicBool>,
+    /// Peak absolute sample of the raw capture for the last recording, before
+    /// VAD. Digital silence stays ~0 even when the stream "succeeds"
+    /// (cjpais/Handy#1899, #2141).
+    last_peak_bits: Arc<AtomicU32>,
 }
 
 impl AudioRecorder {
@@ -117,7 +123,14 @@ impl AudioRecorder {
             selected_channel: None,
             config_cache: Arc::new(Mutex::new(None)),
             stream_error: Arc::new(AtomicBool::new(false)),
+            last_peak_bits: Arc::new(AtomicU32::new(0)),
         })
+    }
+
+    /// Peak absolute raw sample from the recording that just stopped.
+    /// `0.0` means the device delivered digital silence (or never captured).
+    pub fn last_capture_peak(&self) -> f32 {
+        f32::from_bits(self.last_peak_bits.load(Ordering::Relaxed))
     }
 
     /// Attach a single VAD engine, reconfigured per session for the offline vs
@@ -200,6 +213,7 @@ impl AudioRecorder {
         let selected_channel = self.selected_channel;
         let config_cache = Arc::clone(&self.config_cache);
         let stream_error = Arc::clone(&self.stream_error);
+        let peak_bits = Arc::clone(&self.last_peak_bits);
 
         let worker = std::thread::spawn(move || {
             let transport = Arc::new(CaptureTransportState::default());
@@ -271,6 +285,14 @@ impl AudioRecorder {
                         Arc::clone(&transport),
                         Arc::clone(&stream_error),
                     ),
+                    cpal::SampleFormat::I24 => AudioRecorder::build_stream::<cpal::I24>(
+                        &thread_device,
+                        &config,
+                        channels,
+                        selected_channel,
+                        Arc::clone(&transport),
+                        Arc::clone(&stream_error),
+                    ),
                     cpal::SampleFormat::I32 => AudioRecorder::build_stream::<i32>(
                         &thread_device,
                         &config,
@@ -279,7 +301,39 @@ impl AudioRecorder {
                         Arc::clone(&transport),
                         Arc::clone(&stream_error),
                     ),
+                    cpal::SampleFormat::I64 => AudioRecorder::build_stream::<i64>(
+                        &thread_device,
+                        &config,
+                        channels,
+                        selected_channel,
+                        Arc::clone(&transport),
+                        Arc::clone(&stream_error),
+                    ),
+                    cpal::SampleFormat::U16 => AudioRecorder::build_stream::<u16>(
+                        &thread_device,
+                        &config,
+                        channels,
+                        selected_channel,
+                        Arc::clone(&transport),
+                        Arc::clone(&stream_error),
+                    ),
+                    cpal::SampleFormat::U32 => AudioRecorder::build_stream::<u32>(
+                        &thread_device,
+                        &config,
+                        channels,
+                        selected_channel,
+                        Arc::clone(&transport),
+                        Arc::clone(&stream_error),
+                    ),
                     cpal::SampleFormat::F32 => AudioRecorder::build_stream::<f32>(
+                        &thread_device,
+                        &config,
+                        channels,
+                        selected_channel,
+                        Arc::clone(&transport),
+                        Arc::clone(&stream_error),
+                    ),
+                    cpal::SampleFormat::F64 => AudioRecorder::build_stream::<f64>(
                         &thread_device,
                         &config,
                         channels,
@@ -327,6 +381,7 @@ impl AudioRecorder {
                         level_cb,
                         audio_cb,
                         stream_running_at,
+                        peak_bits,
                     );
                     run_consumer(
                         processor,
@@ -555,56 +610,20 @@ impl AudioRecorder {
     fn get_preferred_config(
         device: &cpal::Device,
     ) -> Result<cpal::SupportedStreamConfig, Box<dyn std::error::Error>> {
-        // Use the device's native/default sample rate and let the FrameResampler
-        // in run_consumer() downsample to 16kHz. This avoids forcing hardware into
-        // a non-native rate which can cause issues on some devices (Bluetooth
-        // codecs, certain ALSA drivers, etc.).
-        let default_config = device.default_input_config()?;
-        let target_rate = default_config.sample_rate();
-
-        // Try to find the best sample format at the device's default rate
-        let supported_configs = match device.supported_input_configs() {
-            Ok(configs) => configs,
-            Err(e) => {
-                log::warn!("Could not enumerate input configs ({e}), using device default");
-                return Ok(default_config);
-            }
-        };
-        let mut best_config: Option<cpal::SupportedStreamConfigRange> = None;
-
-        for config_range in supported_configs {
-            if config_range.min_sample_rate() <= target_rate
-                && config_range.max_sample_rate() >= target_rate
-            {
-                match best_config {
-                    None => best_config = Some(config_range),
-                    Some(ref current) => {
-                        // Prioritize F32 > I16 > I32 > others
-                        let score = |fmt: cpal::SampleFormat| match fmt {
-                            cpal::SampleFormat::F32 => 4,
-                            cpal::SampleFormat::I16 => 3,
-                            cpal::SampleFormat::I32 => 2,
-                            _ => 1,
-                        };
-
-                        if score(config_range.sample_format()) > score(current.sample_format()) {
-                            best_config = Some(config_range);
-                        }
-                    }
-                }
-            }
-        }
-
-        if let Some(config) = best_config {
-            return Ok(config.with_sample_rate(target_rate));
-        }
-
-        // Fall back to device default if no config matched (exotic/virtual devices)
-        log::warn!(
-            "No supported config matched device default rate {:?}, using default config",
-            target_rate
-        );
-        Ok(default_config)
+        // The device's default config is the shared-mode mix format (rate and
+        // sample type). Opening a different format — Handy used to prefer F32
+        // even when the endpoint's mix format was integer PCM — succeeds on
+        // some Windows devices and then delivers digital silence. Realtek UAD
+        // after an NVIDIA Broadcast install is the reported case
+        // (cjpais/Handy#2141, #2028). Samples are converted to f32 in the
+        // callback, so the rest of the pipeline stays format-agnostic.
+        //
+        // The default rate is also what we want: FrameResampler downsamples to
+        // 16 kHz later. Forcing a non-native rate breaks Bluetooth and some
+        // ALSA devices.
+        device
+            .default_input_config()
+            .map_err(|err| Box::new(err) as Box<dyn std::error::Error>)
     }
 }
 
@@ -717,6 +736,7 @@ struct CaptureProcessor {
     capture_ready_tx: Option<mpsc::Sender<()>>,
     total_dropped_samples: u64,
     overrun_warning_logged: bool,
+    peak_bits: Arc<AtomicU32>,
 }
 
 impl CaptureProcessor {
@@ -726,6 +746,7 @@ impl CaptureProcessor {
         level_cb: Option<LevelCallback>,
         audio_cb: Option<AudioFrameCallback>,
         stream_running_at: Instant,
+        peak_bits: Arc<AtomicU32>,
     ) -> Self {
         // Resample into frames sized for the active VAD backend (30 ms when
         // no detector is attached) so the detector never sees a partial frame.
@@ -768,6 +789,7 @@ impl CaptureProcessor {
             capture_ready_tx: None,
             total_dropped_samples: 0,
             overrun_warning_logged: false,
+            peak_bits,
         }
     }
 
@@ -777,6 +799,7 @@ impl CaptureProcessor {
         self.capture_ready_tx = Some(ready_tx);
         self.total_dropped_samples = 0;
         self.overrun_warning_logged = false;
+        self.peak_bits.store(0, Ordering::Relaxed);
         self.vad_policy = policy;
         self.processed_samples.clear();
         self.visualizer.reset();
@@ -815,6 +838,17 @@ impl CaptureProcessor {
                 self.stream_running_at.elapsed(),
                 chunk_ms
             );
+        }
+
+        if disposition == ChunkDisposition::Capture {
+            let mut peak = f32::from_bits(self.peak_bits.load(Ordering::Relaxed));
+            for sample in raw {
+                let abs = sample.abs();
+                if abs > peak {
+                    peak = abs;
+                }
+            }
+            self.peak_bits.store(peak.to_bits(), Ordering::Relaxed);
         }
 
         if disposition == ChunkDisposition::Discard {

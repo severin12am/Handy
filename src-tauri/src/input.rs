@@ -263,12 +263,101 @@ pub fn send_paste_shift_insert(enigo: &mut Enigo, hold_ms: u64) -> Result<(), St
     Ok(())
 }
 
-/// Pastes text directly using the enigo text method.
-/// This tries to use system input methods if possible, otherwise simulates keystrokes one by one.
+/// Pastes text directly.
+///
+/// On Windows this uses `SendInput` with `KEYEVENTF_UNICODE`, which inserts
+/// characters independent of the active keyboard layout. Layout-dependent
+/// virtual keys drop Cyrillic and letters such as ê/œ (cjpais/Handy#439, #1853).
+/// Other platforms keep enigo's text entry.
 pub fn paste_text_direct(enigo: &mut Enigo, text: &str) -> Result<(), String> {
-    enigo
-        .text(text)
-        .map_err(|e| format!("Failed to send text directly: {}", e))?;
+    #[cfg(target_os = "windows")]
+    {
+        let _ = enigo;
+        return send_unicode_text_windows(text);
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        enigo
+            .text(text)
+            .map_err(|e| format!("Failed to send text directly: {}", e))?;
+        Ok(())
+    }
+}
 
-    Ok(())
+/// Characters per `SendInput` batch. A single huge injection is dropped by some
+/// targets mid-string, which showed up as history being complete while the
+/// pasted text was truncated (cjpais/Handy#2126).
+#[cfg(target_os = "windows")]
+const UNICODE_CHUNK_CHARS: usize = 24;
+
+#[cfg(target_os = "windows")]
+fn send_unicode_text_windows(text: &str) -> Result<(), String> {
+    use windows::Win32::UI::Input::KeyboardAndMouse::{
+        SendInput, INPUT, INPUT_0, INPUT_KEYBOARD, KEYBDINPUT, KEYBD_EVENT_FLAGS, KEYEVENTF_KEYUP,
+        KEYEVENTF_UNICODE, VIRTUAL_KEY, VK_RETURN, VK_TAB,
+    };
+
+    fn key_event(vk: VIRTUAL_KEY, scan: u16, flags: KEYBD_EVENT_FLAGS) -> INPUT {
+        INPUT {
+            r#type: INPUT_KEYBOARD,
+            Anonymous: INPUT_0 {
+                ki: KEYBDINPUT {
+                    wVk: vk,
+                    wScan: scan,
+                    dwFlags: flags,
+                    time: 0,
+                    dwExtraInfo: 0,
+                },
+            },
+        }
+    }
+
+    let mut batch: Vec<INPUT> = Vec::new();
+    let mut chars_in_batch = 0usize;
+
+    let flush = |batch: &mut Vec<INPUT>| -> Result<(), String> {
+        if batch.is_empty() {
+            return Ok(());
+        }
+        let sent = unsafe { SendInput(batch.as_slice(), std::mem::size_of::<INPUT>() as i32) };
+        let expected = batch.len() as u32;
+        batch.clear();
+        if sent != expected {
+            return Err(format!(
+                "SendInput delivered {sent} of {expected} unicode events"
+            ));
+        }
+        Ok(())
+    };
+
+    let mut chars = text.chars().peekable();
+    while let Some(ch) = chars.next() {
+        if ch == '\r' {
+            continue;
+        }
+        if ch == '\n' {
+            batch.push(key_event(VK_RETURN, 0, KEYBD_EVENT_FLAGS::default()));
+            batch.push(key_event(VK_RETURN, 0, KEYEVENTF_KEYUP));
+        } else if ch == '\t' {
+            batch.push(key_event(VK_TAB, 0, KEYBD_EVENT_FLAGS::default()));
+            batch.push(key_event(VK_TAB, 0, KEYEVENTF_KEYUP));
+        } else {
+            let mut utf16 = [0u16; 2];
+            for unit in ch.encode_utf16(&mut utf16) {
+                batch.push(key_event(VIRTUAL_KEY(0), *unit, KEYEVENTF_UNICODE));
+                batch.push(key_event(
+                    VIRTUAL_KEY(0),
+                    *unit,
+                    KEYEVENTF_UNICODE | KEYEVENTF_KEYUP,
+                ));
+            }
+        }
+        chars_in_batch += 1;
+        if chars_in_batch >= UNICODE_CHUNK_CHARS {
+            flush(&mut batch)?;
+            chars_in_batch = 0;
+            std::thread::sleep(std::time::Duration::from_millis(8));
+        }
+    }
+    flush(&mut batch)
 }

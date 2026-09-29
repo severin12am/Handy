@@ -1,3 +1,21 @@
+# Handy Community
+
+**A community fork of [Handy](https://github.com/cjpais/Handy) by [cjpais](https://github.com/cjpais).** Handy is the original free, offline speech-to-text app. This tree keeps the MIT license and the original copyright, and each fix is written so it can be opened as a pull request against Handy. It is not a competing product.
+
+Sponsor and follow the original author: [cjpais/Handy](https://github.com/cjpais/Handy) (the sponsor links in [Sponsors](#sponsors) below are theirs).
+
+What changed, with upstream issue links: [CHANGELOG.md](CHANGELOG.md). How to send the changes back: [UPSTREAM.md](UPSTREAM.md). How the app is put together: [ARCHITECTURE.md](ARCHITECTURE.md).
+
+### Install
+
+Release builds are produced by the existing GitHub Actions workflows (Windows NSIS installer and portable zip, plus the macOS and Linux bundles). Point the updater endpoint in `src-tauri/tauri.conf.json` at this fork's releases before tagging a version. Until a tag is published here, build from source with [BUILD.md](BUILD.md).
+
+Windows SmartScreen may say the installer is unrecognized because this fork is not signed with Handy's certificate. Choose **More info → Run anyway** if you trust the build you downloaded.
+
+### Privacy
+
+Transcription runs on your computer. Audio is not uploaded. Optional post-processing (off by default) is the only path that sends text to an API you configure. API keys can come from the environment (`HANDY_OPENAI_API_KEY`, `HANDY_<PROVIDER>_API_KEY`, or `HANDY_POST_PROCESS_API_KEY`) and, on Windows, a copy is stored in Credential Manager.
+
 # Handy
 
 [![Discord](https://img.shields.io/badge/Discord-%235865F2.svg?style=for-the-badge&logo=discord&logoColor=white)](https://discord.com/invite/WVBeWsNXK4)

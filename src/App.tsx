@@ -185,6 +185,18 @@ function App() {
   // The payload is the backend error message (also logged to handy.log).
   useEffect(() => {
     const unlisten = listen<string>("transcription-error", (event) => {
+      if (event.payload === "handy:no-microphone-audio") {
+        toast.error(t("errors.noMicrophoneAudioTitle"), {
+          description: t("errors.noMicrophoneAudio"),
+        });
+        return;
+      }
+      if (event.payload === "handy:no-speech") {
+        toast.error(t("errors.noSpeechTitle"), {
+          description: t("errors.noSpeech"),
+        });
+        return;
+      }
       toast.error(t("errors.transcriptionFailedTitle"), {
         description: event.payload,
       });

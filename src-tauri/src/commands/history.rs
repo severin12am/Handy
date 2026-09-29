@@ -114,12 +114,21 @@ pub async fn update_history_limit(
     limit: usize,
 ) -> Result<(), String> {
     let mut settings = crate::settings::get_settings(&app);
+    let previous_limit = settings.history_limit;
     settings.history_limit = limit;
+    let retention = settings.recording_retention_period;
     crate::settings::write_settings(&app, settings);
 
-    history_manager
-        .cleanup_old_entries()
-        .map_err(|e| e.to_string())?;
+    // Editing the field used to persist every keystroke and immediately delete
+    // recordings (cjpais/Handy#1262). Only a committed smaller limit, while the
+    // count-based retention mode is active, may delete anything.
+    if retention == crate::settings::RecordingRetentionPeriod::PreserveLimit
+        && limit < previous_limit
+    {
+        history_manager
+            .cleanup_old_entries()
+            .map_err(|e| e.to_string())?;
+    }
 
     Ok(())
 }
@@ -146,9 +155,12 @@ pub async fn update_recording_retention_period(
     settings.recording_retention_period = retention_period;
     crate::settings::write_settings(&app, settings);
 
-    history_manager
-        .cleanup_old_entries()
-        .map_err(|e| e.to_string())?;
+    // "Never" must not delete. Switching to a finite policy still prunes.
+    if retention_period != crate::settings::RecordingRetentionPeriod::Never {
+        history_manager
+            .cleanup_old_entries()
+            .map_err(|e| e.to_string())?;
+    }
 
     Ok(())
 }

@@ -980,6 +980,16 @@ impl AudioRecordingManager {
         self.cancel_generation.load(Ordering::Acquire) != generation
     }
 
+    /// Peak absolute raw sample from the capture that just stopped.
+    pub fn last_capture_peak(&self) -> f32 {
+        self.recorder
+            .lock()
+            .unwrap()
+            .as_ref()
+            .map(|recorder| recorder.last_capture_peak())
+            .unwrap_or(0.0)
+    }
+
     pub fn stop_recording(&self, binding_id: &str, cancel_generation: u64) -> Option<Vec<f32>> {
         self.invalidate_recording_readiness();
         let mut state = self.state.lock().unwrap();
