@@ -517,6 +517,15 @@ pub fn ensure_space_after_punctuation(text: &str) -> String {
 
 /// Prepend one space when `previous` is a non-space character and `text`
 /// starts with a letter or digit. Never produces a double space.
+/// One trailing space so the next dictation does not glue to this one.
+/// Skips text that already ends in whitespace, including a newline.
+pub fn ensure_trailing_separator(text: &str) -> String {
+    match text.chars().next_back() {
+        Some(ch) if !ch.is_whitespace() => format!("{text} "),
+        _ => text.to_string(),
+    }
+}
+
 pub fn ensure_leading_separator(text: &str, previous: Option<char>) -> String {
     let Some(prev) = previous else {
         return text.to_string();
@@ -1089,6 +1098,20 @@ mod tests {
         assert_eq!(ensure_leading_separator(" hello", Some('d')), " hello");
         assert_eq!(ensure_leading_separator("hello", Some(' ')), "hello");
         assert_eq!(ensure_leading_separator(".hello", Some('d')), ".hello");
+    }
+
+    #[test]
+    fn first_recording_gets_a_trailing_space_without_doubling() {
+        assert_eq!(ensure_trailing_separator("hello"), "hello ");
+        assert_eq!(ensure_trailing_separator("hello "), "hello ");
+        assert_eq!(ensure_trailing_separator("hello\n"), "hello\n");
+        let first = ensure_trailing_separator("hello");
+        let second = ensure_leading_separator("world", first.chars().next_back());
+        assert_eq!(second, "world");
+        assert_eq!(
+            format!("{first}{}", ensure_trailing_separator(&second)),
+            "hello world "
+        );
     }
 
     #[test]

@@ -12,7 +12,7 @@ pub use audio::{
 pub use lang_id::detect_output_language;
 pub use text::{
     apply_custom_words, apply_voice_commands, chunk_audio_at_silence, ensure_leading_separator,
-    ensure_space_after_punctuation, is_digital_silence, join_transcript_chunks,
+    ensure_space_after_punctuation, ensure_trailing_separator, is_digital_silence, join_transcript_chunks,
     normalize_transcription_output, remove_filler_words, strip_unk_tokens, OutputLanguageEvidence,
 };
 pub use utils::get_cpal_host;

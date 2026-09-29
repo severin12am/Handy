@@ -607,7 +607,10 @@
         "clear": "Unbind",
         "autoEnter": "Press Enter after pasting into the target",
         "empty": "No window bound",
-        "enabled": "Binding on"
+        "enabled": "Binding on",
+        "pastingInto": "Pasting into: {{name}}",
+        "windowCount": "{{count}} open windows",
+        "listFailed": "Could not list open windows"
       }
     },
     "about": {

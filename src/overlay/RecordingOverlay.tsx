@@ -90,7 +90,9 @@ const RecordingOverlay: React.FC = () => {
             const target = settings.data.dictation_target;
             setBoundApp(
               target?.enabled
-                ? target.process_name || target.title_substring || ""
+                ? [target.process_name, target.title_substring]
+                    .filter((part) => part && part.length > 0)
+                    .join(" — ")
                 : "",
             );
           }
