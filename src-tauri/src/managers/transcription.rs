@@ -2074,10 +2074,12 @@ pub fn report_compute_devices() {
 /// Whisper Large v3 Turbo when a GPU reports at least 6 GB. Otherwise Parakeet
 /// V3, a smaller multilingual model that runs on a weak PC or CPU.
 pub fn starter_model_id_for_vram(max_vram_mb: u64) -> &'static str {
+    // Ids include the quant file. The downloader rejects the catalog repo id alone.
+    // Q4 keeps the first download around 500 MB.
     if max_vram_mb >= 6_144 {
-        "handy-computer/whisper-large-v3-turbo-gguf"
+        "handy-computer/whisper-large-v3-turbo-gguf/whisper-large-v3-turbo-Q4_K_M.gguf"
     } else {
-        "handy-computer/parakeet-tdt-0.6b-v3-gguf"
+        "handy-computer/parakeet-tdt-0.6b-v3-gguf/parakeet-tdt-0.6b-v3-Q4_K_M.gguf"
     }
 }
 
@@ -2343,19 +2345,19 @@ mod tests {
     fn starter_model_follows_vram() {
         assert_eq!(
             starter_model_id_for_vram(12_288),
-            "handy-computer/whisper-large-v3-turbo-gguf"
+            "handy-computer/whisper-large-v3-turbo-gguf/whisper-large-v3-turbo-Q4_K_M.gguf"
         );
         assert_eq!(
             starter_model_id_for_vram(6_144),
-            "handy-computer/whisper-large-v3-turbo-gguf"
+            "handy-computer/whisper-large-v3-turbo-gguf/whisper-large-v3-turbo-Q4_K_M.gguf"
         );
         assert_eq!(
             starter_model_id_for_vram(4_096),
-            "handy-computer/parakeet-tdt-0.6b-v3-gguf"
+            "handy-computer/parakeet-tdt-0.6b-v3-gguf/parakeet-tdt-0.6b-v3-Q4_K_M.gguf"
         );
         assert_eq!(
             starter_model_id_for_vram(0),
-            "handy-computer/parakeet-tdt-0.6b-v3-gguf"
+            "handy-computer/parakeet-tdt-0.6b-v3-gguf/parakeet-tdt-0.6b-v3-Q4_K_M.gguf"
         );
     }
 

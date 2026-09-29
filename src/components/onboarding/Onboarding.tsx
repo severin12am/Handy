@@ -33,6 +33,7 @@ const Onboarding: React.FC<OnboardingProps> = ({
   const [selectedModelId, setSelectedModelId] = useState<string | null>(null);
   const [showAll, setShowAll] = useState(false);
   const [ready, setReady] = useState(false);
+  const [downloadFailed, setDownloadFailed] = useState(false);
   const autoStarted = useRef(false);
   const hasStartedSelection = useRef(false);
 
@@ -124,10 +125,12 @@ const Onboarding: React.FC<OnboardingProps> = ({
         if (already) {
           handleSelectExistingModel(modelId);
         } else {
-          await handleDownloadModel(modelId);
+          const started = await handleDownloadModel(modelId);
+          if (!started) setDownloadFailed(true);
         }
       } catch {
         autoStarted.current = false;
+        setDownloadFailed(true);
       }
     })();
   }, [models, preview]);
@@ -137,7 +140,7 @@ const Onboarding: React.FC<OnboardingProps> = ({
   };
 
   const handleDownloadModel = async (modelId: string) => {
-    if (preview) return;
+    if (preview) return false;
 
     setSelectedModelId(modelId);
 
@@ -145,6 +148,7 @@ const Onboarding: React.FC<OnboardingProps> = ({
     if (!success) {
       setSelectedModelId(null);
     }
+    return success;
   };
 
   const handleCancelDownload = async (modelId: string) => {
@@ -212,6 +216,8 @@ const Onboarding: React.FC<OnboardingProps> = ({
           >
             {t("onboarding.continue")}
           </button>
+        ) : downloadFailed ? (
+          <p className="mt-2 text-sm text-text/70">{t("onboarding.subtitle")}</p>
         ) : (
           <div className="mt-2 w-full max-w-md">
             <p className="text-sm text-text/70">{t("onboarding.downloading")}</p>
