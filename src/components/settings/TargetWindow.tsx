@@ -63,6 +63,7 @@ export const TargetWindowSetting: React.FC<TargetWindowProps> = ({
       description={t("settings.debug.targetWindow.description")}
       descriptionMode={descriptionMode}
       grouped={grouped}
+      layout="stacked"
     >
       <div className="flex flex-col gap-2 w-full">
         <div className="text-sm text-text">
@@ -159,7 +160,7 @@ export const TargetWindowSetting: React.FC<TargetWindowProps> = ({
           label={t("settings.debug.targetWindow.enabled")}
           description={t("settings.debug.targetWindow.description")}
           descriptionMode="tooltip"
-          grouped={false}
+          grouped={true}
         />
         <ToggleSwitch
           checked={target?.auto_enter ?? false}
@@ -177,7 +178,7 @@ export const TargetWindowSetting: React.FC<TargetWindowProps> = ({
           label={t("settings.debug.targetWindow.autoEnter")}
           description={t("settings.debug.targetWindow.autoEnter")}
           descriptionMode="tooltip"
-          grouped={false}
+          grouped={true}
         />
       </div>
     </SettingContainer>
