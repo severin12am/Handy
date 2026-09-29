@@ -631,6 +631,12 @@ impl TranscriptionManager {
                     .device()
                     .map(|device| transcribe_device_label(&device))
                     .unwrap_or_else(|_| "unknown".to_string());
+                if gpu_may_be_slower_than_cpu(&bound_device) {
+                    warn!(
+                        "Auto selected GPU device '{}'. On some integrated GPUs this is slower than CPU (cjpais/Handy#1884). Set Acceleration to CPU if transcription regresses. Likely relevant, not reproduced on discrete NVIDIA.",
+                        bound_device
+                    );
+                }
                 info!(
                     "Loaded whisper model '{}' (requested {:?}, requested device '{}', \
                      bound backend '{}', bound device '{}', supports_streaming={}, \
@@ -1825,6 +1831,21 @@ fn run_chunked(
     Ok(join_transcript_chunks(&parts))
 }
 
+/// Integrated GPUs that showed up slower than CPU after Vulkan became the
+/// Auto default in 0.9.4 (cjpais/Handy#1884). Discrete NVIDIA/AMD cards are
+/// left alone.
+pub fn gpu_may_be_slower_than_cpu(device_label: &str) -> bool {
+    let label = device_label.to_lowercase();
+    if label.contains("nvidia") || label.contains("geforce") || label.contains("rtx") {
+        return false;
+    }
+    label.contains("intel")
+        || label.contains("uhd")
+        || label.contains("iris")
+        || label.contains("arc")
+        || (label.contains("radeon") && !label.contains("rx"))
+}
+
 fn is_gpu_backend_failure(message: &str) -> bool {
     let message = message.to_ascii_lowercase();
     message.contains("device lost")
@@ -2297,6 +2318,14 @@ mod tests {
 
     fn languages(codes: &[&str]) -> Vec<String> {
         codes.iter().map(|code| (*code).to_string()).collect()
+    }
+
+    #[test]
+    fn integrated_gpu_names_are_flagged_as_possibly_slow() {
+        assert!(gpu_may_be_slower_than_cpu("Intel(R) UHD Graphics"));
+        assert!(gpu_may_be_slower_than_cpu("AMD Radeon Graphics"));
+        assert!(!gpu_may_be_slower_than_cpu("NVIDIA GeForce RTX 4070 Ti"));
+        assert!(!gpu_may_be_slower_than_cpu("CPU"));
     }
 
     #[test]
