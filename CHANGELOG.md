@@ -2,7 +2,15 @@
 
 Community fork of [Handy](https://github.com/cjpais/Handy) by cjpais. Each item names the upstream issue it addresses. The MIT license and original copyright are unchanged.
 
-## Unreleased
+## 1.0.0-community
+
+First installable build of this fork.
+
+- Windows release builds an NSIS `.exe` and an `.msi` on a Windows runner. The Vulkan SDK is installed in CI only. A normal GPU driver is enough; if the GPU backend fails, Handy loads the model on CPU.
+- The installer is unsigned. Windows SmartScreen needs **More info → Run anyway**. There is no fork code-signing certificate.
+- First launch picks Whisper Large v3 Turbo when a GPU reports at least 6 GB of VRAM, otherwise Parakeet V3, downloads it with a progress bar, and uses the Windows default microphone. The model list stays available.
+- The first screen shows **Ctrl+Space** and a box to try dictation.
+- The updater looks at `severin12am/Handy` releases and uses a new minisign key. The private key is only in GitHub Actions secrets `TAURI_SIGNING_PRIVATE_KEY` and `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`.
 
 ### Bug fixes
 

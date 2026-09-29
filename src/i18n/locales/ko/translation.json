@@ -118,7 +118,14 @@
         "checkFailed": "권한 확인에 실패했습니다. 다시 시도해주세요.",
         "requestFailed": "권한 요청에 실패했습니다. 다시 시도해주세요."
       }
-    }
+    },
+    "hero": "Using your Windows default microphone. Handy is downloading a model that fits this PC.",
+    "shortcutKeys": "Ctrl + Space",
+    "shortcutHint": "Hold it, speak, then let go. Your words land where you are typing.",
+    "tryLabel": "Try it now",
+    "tryPlaceholder": "Click here after the bar finishes, hold Ctrl+Space, and speak.",
+    "downloading": "Downloading the model. This usually takes under two minutes.",
+    "continue": "Continue"
   },
   "modelSelector": {
     "custom": "사용자 정의",

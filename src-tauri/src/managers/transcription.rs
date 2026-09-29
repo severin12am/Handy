@@ -2071,6 +2071,25 @@ pub fn report_compute_devices() {
     );
 }
 
+/// Whisper Large v3 Turbo when a GPU reports at least 6 GB. Otherwise Parakeet
+/// V3, a smaller multilingual model that runs on a weak PC or CPU.
+pub fn starter_model_id_for_vram(max_vram_mb: u64) -> &'static str {
+    if max_vram_mb >= 6_144 {
+        "handy-computer/whisper-large-v3-turbo-gguf"
+    } else {
+        "handy-computer/parakeet-tdt-0.6b-v3-gguf"
+    }
+}
+
+pub fn max_gpu_vram_mb() -> u64 {
+    transcribe_compute_devices()
+        .into_iter()
+        .filter(|device| device.kind != "cpu")
+        .map(|device| device.memory_total / (1024 * 1024))
+        .max()
+        .unwrap_or(0)
+}
+
 /// Human-readable list of the transcribe-cpp compute devices registered at
 /// startup, for the `--list-devices` flag. The reported `index` is the
 /// value to pass to `--device-index`. Backends must be initialized first
@@ -2318,6 +2337,26 @@ mod tests {
 
     fn languages(codes: &[&str]) -> Vec<String> {
         codes.iter().map(|code| (*code).to_string()).collect()
+    }
+
+    #[test]
+    fn starter_model_follows_vram() {
+        assert_eq!(
+            starter_model_id_for_vram(12_288),
+            "handy-computer/whisper-large-v3-turbo-gguf"
+        );
+        assert_eq!(
+            starter_model_id_for_vram(6_144),
+            "handy-computer/whisper-large-v3-turbo-gguf"
+        );
+        assert_eq!(
+            starter_model_id_for_vram(4_096),
+            "handy-computer/parakeet-tdt-0.6b-v3-gguf"
+        );
+        assert_eq!(
+            starter_model_id_for_vram(0),
+            "handy-computer/parakeet-tdt-0.6b-v3-gguf"
+        );
     }
 
     #[test]

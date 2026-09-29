@@ -20,6 +20,13 @@
   },
   "onboarding": {
     "subtitle": "To get started, choose a transcription model",
+    "hero": "Using your Windows default microphone. Handy is downloading a model that fits this PC.",
+    "shortcutKeys": "Ctrl + Space",
+    "shortcutHint": "Hold it, speak, then let go. Your words land where you are typing.",
+    "tryLabel": "Try it now",
+    "tryPlaceholder": "Click here after the bar finishes, hold Ctrl+Space, and speak.",
+    "downloading": "Downloading the model. This usually takes under two minutes.",
+    "continue": "Continue",
     "existingModelsTitle": "Compatible Models",
     "downloadModelsTitle": "Available to Download",
     "showAllModels": "Show all {{total}} models",
