@@ -34,6 +34,15 @@ pub fn handle_shortcut_event(
 ) {
     let settings = get_settings(app);
 
+    if binding_id == "toggle_dictation_target" {
+        if is_pressed {
+            if let Err(error) = crate::shortcut::toggle_dictation_target_enabled(app) {
+                warn!("Could not toggle dictation target: {error}");
+            }
+        }
+        return;
+    }
+
     // Transcribe bindings are handled by the coordinator.
     if is_transcribe_binding(binding_id) {
         if let Some(coordinator) = app.try_state::<TranscriptionCoordinator>() {

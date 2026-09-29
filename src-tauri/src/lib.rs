@@ -19,6 +19,7 @@ pub mod portable;
 mod secure_input;
 mod secrets;
 mod settings;
+mod target_window;
 mod shortcut;
 mod signal_handle;
 mod transcription_coordinator;
@@ -302,6 +303,11 @@ fn initialize_core_logic(app_handle: &AppHandle) {
             }
             "copy_last_transcript" => {
                 tray::copy_last_transcript(app);
+            }
+            "toggle_dictation_target" => {
+                if let Err(error) = shortcut::toggle_dictation_target_enabled(app) {
+                    log::warn!("Could not toggle dictation target: {error}");
+                }
             }
             "unload_model" => {
                 let transcription_manager = app.state::<Arc<TranscriptionManager>>();
@@ -704,6 +710,10 @@ pub fn run(cli_args: CliArgs) {
             shortcut::change_smart_spacing_setting,
             shortcut::change_voice_commands_setting,
             shortcut::change_auto_submit_apps_setting,
+            shortcut::change_dictation_target_setting,
+            shortcut::clear_dictation_target_setting,
+            shortcut::list_dictation_windows,
+            shortcut::arm_pick_dictation_window,
             shortcut::change_lazy_stream_close_setting,
             shortcut::change_vad_enabled_setting,
             shortcut::change_vad_backend_setting,

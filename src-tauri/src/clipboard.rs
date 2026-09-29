@@ -9,7 +9,7 @@ use std::process::Command;
 use std::sync::OnceLock;
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
-use tauri::{AppHandle, Manager};
+use tauri::{AppHandle, Emitter, Manager};
 use tauri_plugin_clipboard_manager::ClipboardExt;
 
 #[cfg(target_os = "linux")]
@@ -871,6 +871,16 @@ fn should_send_auto_submit(auto_submit: bool, paste_method: PasteMethod) -> bool
     auto_submit && paste_method != PasteMethod::None
 }
 
+struct FocusRestore(Option<isize>);
+
+impl Drop for FocusRestore {
+    fn drop(&mut self) {
+        if let Some(previous) = self.0.take() {
+            crate::target_window::restore_focus(previous);
+        }
+    }
+}
+
 pub fn paste(text: String, app_handle: AppHandle) -> Result<(), String> {
     let settings = get_settings(&app_handle);
     let paste_method = settings.paste_method;
@@ -891,7 +901,24 @@ pub fn paste(text: String, app_handle: AppHandle) -> Result<(), String> {
     if settings.smart_spacing {
         remember_insertion(&text);
     }
-    let auto_submit = auto_submit_allowed(&settings);
+    let target_auto_enter = settings
+        .dictation_target
+        .as_ref()
+        .is_some_and(|target| target.enabled && target.auto_enter);
+    let auto_submit = auto_submit_allowed(&settings) || target_auto_enter;
+
+    let previous_focus = match crate::target_window::focus_for_paste(settings.dictation_target.as_ref())
+    {
+        crate::target_window::FocusOutcome::Focused { previous } => Some(previous),
+        crate::target_window::FocusOutcome::Missing => {
+            let _ = write_text_to_clipboard(&app_handle, &text);
+            let _ = app_handle.emit("transcription-error", "handy:target-window-missing");
+            info!("Bound window missing; transcript left on the clipboard");
+            return Ok(());
+        }
+        crate::target_window::FocusOutcome::Inactive => None,
+    };
+    let _restore_focus = FocusRestore(previous_focus);
 
     info!(
         "Using paste method: {:?}, delay before: {}ms, delay after: {}ms",

@@ -96,22 +96,32 @@ Base every branch on current `cjpais/Handy` `main` and cherry-pick only the file
 - Files: `audio_toolkit/text.rs`, settings fields `smart_spacing`, `voice_commands_enabled`, `auto_submit_apps`, commands in `shortcut/mod.rs`, `src/components/settings/SmartSpacing.tsx`, `VoiceCommands.tsx`, `AutoSubmit.tsx`, locale strings.
 - Suggested discussion: these extend existing filler removal, trailing space, and auto-submit. They do not add a second post-processing or dictionary system.
 
+## Fixed in the fork; an upstream PR already exists
+
+Do not open a second pull request for these.
+
+| Issue | Upstream PR | What this fork did |
+| --- | --- | --- |
+| #2141 | #2144 by @cjpais | Uses `default_input_config()` and still caches it. PR #2144 drops the cache; this fork keeps it. |
+| #1899 | #2150 by @dimmgigoveu-gif, #1903 by @Charlie284 | Peak check before transcription and a settings toast. |
+| #1384 | #2021 by @BradGroux | Asset protocol is limited to app data and resources, not `**`. |
+| #2089 | #2097 by @xronocode | Cherry-picked the approach: `received_at` on the input event, with the same unit test. |
+| #642 | #2168 by @Pifan07 | Mutes when recording is requested, before capture, instead of after the start chime. |
+
+## Likely fixed, not reproduced
+
+| Issue | Defensive change |
+| --- | --- |
+| #508 | Overlay events carry a generation so a delayed state cannot rewind the pill. |
+| #1314 | Windows handy-keys no longer swallows the registered chord. |
+| #1884 | Integrated-GPU device names log a warning to try CPU. NVIDIA is not switched. |
+| #2070 | A dead capture stream surfaces "Microphone stopped" instead of an empty close. |
+
 ## Skipped on purpose
 
 | Topic | Why |
 | --- | --- |
-| #642 mute delay | Open PR cjpais/Handy#2168 |
-| #1899 if #2150 or #1903 merges | Open PRs already |
-| #2141 if #2144 merges | Open PR already; this fork's version keeps the config cache |
-| #1384 if #2021 merges | Open PR already |
-| #2089 first hold-or-toggle edge | Open PR cjpais/Handy#2097 changes the same timing path; not reimplemented here |
-| #508 overlay state | No reliable repro beyond the hide/show generation fix already on main. WebView visibility in #11 may help. |
-| #1314 hotkey swallow | Needs a captured trace of which hook ate the key. Not changed. |
-| #1884 performance since 0.9.4 | No local profile yet; the machine could not finish a Vulkan build (SDK installer was cancelled at the UAC prompt). |
 | Meeting mode | Not implemented. Needs a WASAPI loopback path and a transcript window; Handy has no loopback capture to extend. |
-| Target-window binding | Not implemented. Needs a foreground-override that is easy to get wrong on Windows. |
-| Microphone level meter in settings | Not implemented. The overlay visualizer and the silence toast cover the diagnostic the issues asked for; a settings meter is still worth adding. |
-| #2070 focus loss after 3s | Not reproduced in code review; no change. |
 
 ## Verification already run
 

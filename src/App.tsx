@@ -185,6 +185,18 @@ function App() {
   // The payload is the backend error message (also logged to handy.log).
   useEffect(() => {
     const unlisten = listen<string>("transcription-error", (event) => {
+      if (event.payload === "handy:target-window-missing") {
+        toast.error(t("errors.targetWindowMissingTitle"), {
+          description: t("errors.targetWindowMissing"),
+        });
+        return;
+      }
+      if (event.payload === "handy:mic-stream-stopped") {
+        toast.error(t("errors.micStreamStoppedTitle"), {
+          description: t("errors.micStreamStopped"),
+        });
+        return;
+      }
       if (event.payload === "handy:no-microphone-audio") {
         toast.error(t("errors.noMicrophoneAudioTitle"), {
           description: t("errors.noMicrophoneAudio"),

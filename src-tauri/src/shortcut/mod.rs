@@ -1289,6 +1289,71 @@ pub fn change_voice_commands_setting(app: AppHandle, enabled: bool) -> Result<()
 
 #[tauri::command]
 #[specta::specta]
+pub fn change_dictation_target_setting(
+    app: AppHandle,
+    process_name: String,
+    title_substring: String,
+    auto_enter: bool,
+    enabled: bool,
+) -> Result<(), String> {
+    let mut settings = settings::get_settings(&app);
+    settings.dictation_target = Some(settings::DictationTarget {
+        process_name,
+        title_substring,
+        auto_enter,
+        enabled,
+    });
+    settings::write_settings(&app, settings);
+    crate::tray::update_tray_menu(&app);
+    Ok(())
+}
+
+#[tauri::command]
+#[specta::specta]
+pub fn clear_dictation_target_setting(app: AppHandle) -> Result<(), String> {
+    let mut settings = settings::get_settings(&app);
+    settings.dictation_target = None;
+    settings::write_settings(&app, settings);
+    crate::tray::update_tray_menu(&app);
+    Ok(())
+}
+
+#[tauri::command]
+#[specta::specta]
+pub fn list_dictation_windows() -> Vec<crate::target_window::ListedWindow> {
+    crate::target_window::list_open_windows()
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn arm_pick_dictation_window(app: AppHandle) -> Result<(), String> {
+    tokio::time::sleep(std::time::Duration::from_secs(3)).await;
+    let Some(mut captured) = crate::target_window::capture_foreground_window() else {
+        return Err("No foreground window to bind".into());
+    };
+    let mut settings = settings::get_settings(&app);
+    if let Some(existing) = &settings.dictation_target {
+        captured.auto_enter = existing.auto_enter;
+    }
+    settings.dictation_target = Some(captured);
+    settings::write_settings(&app, settings);
+    crate::tray::update_tray_menu(&app);
+    Ok(())
+}
+
+pub fn toggle_dictation_target_enabled(app: &AppHandle) -> Result<(), String> {
+    let mut settings = settings::get_settings(app);
+    let Some(target) = settings.dictation_target.as_mut() else {
+        return Err("No dictation target is bound".into());
+    };
+    target.enabled = !target.enabled;
+    settings::write_settings(app, settings);
+    crate::tray::update_tray_menu(app);
+    Ok(())
+}
+
+#[tauri::command]
+#[specta::specta]
 pub fn change_auto_submit_apps_setting(app: AppHandle, apps: String) -> Result<(), String> {
     let mut settings = settings::get_settings(&app);
     settings.auto_submit_apps = apps
