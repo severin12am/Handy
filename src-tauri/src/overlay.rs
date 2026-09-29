@@ -592,7 +592,15 @@ fn show_overlay_state_on_main(app_handle: &AppHandle, state: &str) {
             );
         }
 
-        let _ = overlay_window.emit("show-overlay", state);
+        let generation = OVERLAY_SHOW_GENERATION.load(Ordering::SeqCst);
+        // Generation lets the overlay ignore a delayed state event, which
+        // showed "transcribing" during record and "recording" after release
+        // when the target app was elevated (cjpais/Handy#508). Likely fixed,
+        // not reproduced against an admin Visual Studio.
+        let _ = overlay_window.emit(
+            "show-overlay",
+            serde_json::json!({ "state": state, "generation": generation }),
+        );
     }
 }
 
@@ -706,8 +714,12 @@ pub fn hide_recording_overlay(app_handle: &AppHandle) {
         // Snapshot before doing anything observable, so any show that lands
         // after this point invalidates the delayed hide below.
         let scheduled_at = OVERLAY_SHOW_GENERATION.load(Ordering::SeqCst);
-        // Emit event to trigger fade-out animation
-        let _ = overlay_window.emit("hide-overlay", ());
+        // Emit event to trigger fade-out animation. The generation lets a
+        // hide from the previous session lose to a show that already happened.
+        let _ = overlay_window.emit(
+            "hide-overlay",
+            serde_json::json!({ "generation": scheduled_at }),
+        );
         // Hide the window after a short delay to allow animation to complete,
         // unless a newer session has shown the overlay again by then.
         let app_for_hide = app_handle.clone();
