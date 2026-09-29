@@ -1,5 +1,8 @@
 use crate::audio_feedback;
-use crate::audio_toolkit::audio::{list_input_devices, list_output_devices, AudioRecorder};
+use crate::audio_toolkit::audio::{
+    list_input_devices, list_output_devices, probe_input_device, AudioRecorder,
+};
+use crate::audio_toolkit::is_digital_silence;
 use crate::managers::audio::{AudioRecordingManager, MicrophoneMode};
 use crate::settings::{get_settings, write_settings};
 use log::warn;
@@ -288,6 +291,61 @@ pub fn get_selected_output_device(app: AppHandle) -> Result<String, String> {
     Ok(settings
         .selected_output_device
         .unwrap_or_else(|| "default".to_string()))
+}
+
+#[derive(serde::Serialize, specta::Type)]
+pub struct MicrophoneTestResult {
+    pub peak: f32,
+    pub rms: f32,
+    pub sample_rate: u32,
+    pub channels: u16,
+    pub sample_format: String,
+    pub digital_silence: bool,
+}
+
+/// Listen to the selected microphone for about a second and report the level.
+/// Emits `mic-test-level` (0.0–1.0 peak so far) while it runs.
+#[tauri::command]
+#[specta::specta]
+pub async fn test_microphone(app: AppHandle) -> Result<MicrophoneTestResult, String> {
+    let selected = get_selected_microphone(app.clone())?;
+    tokio::task::spawn_blocking(move || {
+        let devices =
+            list_input_devices().map_err(|err| format!("Failed to list microphones: {err}"))?;
+        let chosen = if selected == "default" {
+            let index = devices
+                .iter()
+                .position(|device| device.is_default)
+                .unwrap_or(0);
+            devices.into_iter().nth(index)
+        } else {
+            devices
+                .into_iter()
+                .find(|device| device.name == selected)
+        };
+        let Some(device) = chosen else {
+            return Err("No microphone found".to_string());
+        };
+        let app_for_levels = app.clone();
+        let probe = probe_input_device(
+            &device.device,
+            std::time::Duration::from_millis(1200),
+            &move |level| {
+                use tauri::Emitter;
+                let _ = app_for_levels.emit("mic-test-level", level);
+            },
+        )?;
+        Ok(MicrophoneTestResult {
+            digital_silence: is_digital_silence(probe.peak),
+            peak: probe.peak,
+            rms: probe.rms,
+            sample_rate: probe.sample_rate,
+            channels: probe.channels,
+            sample_format: probe.sample_format,
+        })
+    })
+    .await
+    .map_err(|err| format!("microphone test task failed: {err}"))?
 }
 
 #[tauri::command]

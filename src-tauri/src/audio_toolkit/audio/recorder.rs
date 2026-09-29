@@ -9,7 +9,7 @@ use std::{
 
 use cpal::{
     traits::{DeviceTrait, HostTrait, StreamTrait},
-    Device, Sample, SizedSample,
+    Device, FromSample, Sample, SizedSample,
 };
 use rtrb::{Consumer, Producer, RingBuffer};
 
@@ -625,6 +625,121 @@ impl AudioRecorder {
             .default_input_config()
             .map_err(|err| Box::new(err) as Box<dyn std::error::Error>)
     }
+}
+
+/// One-shot microphone check used by the settings meter.
+#[derive(Debug, Clone, PartialEq)]
+pub struct InputProbe {
+    pub peak: f32,
+    pub rms: f32,
+    pub sample_rate: u32,
+    pub channels: u16,
+    pub sample_format: String,
+}
+
+/// Opens the device in its native format, listens for `duration`, and reports
+/// the peak and RMS. `on_level` is called about every 50 ms with the peak so
+/// far, for a live meter. Digital silence is `peak` near zero
+/// (cjpais/Handy#1899, #2141).
+pub fn probe_input_device(
+    device: &cpal::Device,
+    duration: Duration,
+    on_level: &(dyn Fn(f32) + Send + Sync),
+) -> Result<InputProbe, String> {
+    let config = AudioRecorder::get_preferred_config(device).map_err(|err| err.to_string())?;
+    let stats = Arc::new(ProbeAccum::default());
+    let stream = match config.sample_format() {
+        cpal::SampleFormat::F32 => open_probe_stream::<f32>(device, &config, Arc::clone(&stats)),
+        cpal::SampleFormat::F64 => open_probe_stream::<f64>(device, &config, Arc::clone(&stats)),
+        cpal::SampleFormat::I16 => open_probe_stream::<i16>(device, &config, Arc::clone(&stats)),
+        cpal::SampleFormat::I32 => open_probe_stream::<i32>(device, &config, Arc::clone(&stats)),
+        cpal::SampleFormat::I24 => {
+            open_probe_stream::<cpal::I24>(device, &config, Arc::clone(&stats))
+        }
+        cpal::SampleFormat::U16 => open_probe_stream::<u16>(device, &config, Arc::clone(&stats)),
+        cpal::SampleFormat::U8 => open_probe_stream::<u8>(device, &config, Arc::clone(&stats)),
+        other => {
+            return Err(format!(
+                "Unsupported sample format for microphone test: {other:?}"
+            ))
+        }
+    }?;
+    stream
+        .play()
+        .map_err(|err| format!("Failed to start microphone test: {err}"))?;
+
+    let started = Instant::now();
+    while started.elapsed() < duration {
+        on_level(stats.peak());
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    drop(stream);
+
+    let count = stats.count.load(Ordering::Relaxed);
+    let sum_sq = *stats.sum_sq.lock().unwrap_or_else(|err| err.into_inner());
+    let rms = if count == 0 {
+        0.0
+    } else {
+        (sum_sq / count as f64).sqrt() as f32
+    };
+    Ok(InputProbe {
+        peak: stats.peak(),
+        rms,
+        sample_rate: config.sample_rate().0,
+        channels: config.channels(),
+        sample_format: format!("{:?}", config.sample_format()),
+    })
+}
+
+#[derive(Default)]
+struct ProbeAccum {
+    peak_bits: AtomicU32,
+    sum_sq: Mutex<f64>,
+    count: AtomicU64,
+}
+
+impl ProbeAccum {
+    fn peak(&self) -> f32 {
+        f32::from_bits(self.peak_bits.load(Ordering::Relaxed))
+    }
+
+    fn note(&self, sample: f32) {
+        let abs = sample.abs();
+        let current = self.peak();
+        if abs > current {
+            self.peak_bits.store(abs.to_bits(), Ordering::Relaxed);
+        }
+        *self.sum_sq.lock().unwrap_or_else(|err| err.into_inner()) +=
+            f64::from(sample) * f64::from(sample);
+        self.count.fetch_add(1, Ordering::Relaxed);
+    }
+}
+
+fn open_probe_stream<T>(
+    device: &cpal::Device,
+    config: &cpal::SupportedStreamConfig,
+    stats: Arc<ProbeAccum>,
+) -> Result<cpal::Stream, String>
+where
+    T: SizedSample + Send + 'static,
+    f32: FromSample<T>,
+{
+    let channels = config.channels() as usize;
+    device
+        .build_input_stream(
+            &config.config(),
+            move |data: &[T], _| {
+                if channels == 0 {
+                    return;
+                }
+                for frame in data.chunks(channels) {
+                    stats.note(frame[0].to_sample::<f32>());
+                }
+            },
+            |err| log::warn!("Microphone test stream error: {err}"),
+            None,
+        )
+        .map_err(|err| format!("Failed to open microphone test stream: {err}"))
 }
 
 fn acknowledge_pause_after_write(transport: &CaptureTransportState) {
