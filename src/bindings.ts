@@ -691,6 +691,9 @@ async getAvailableModels() : Promise<Result<ModelInfo[], string>> {
     else return { status: "error", error: e  as any };
 }
 },
+async recommendStarterModel() : Promise<string> {
+    return await TAURI_INVOKE("recommend_starter_model");
+},
 async getModelInfo(modelId: string) : Promise<Result<ModelInfo | null, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("get_model_info", { modelId }) };

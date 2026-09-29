@@ -8,9 +8,17 @@ What changed, with upstream issue links: [CHANGELOG.md](CHANGELOG.md). How to se
 
 ### Install
 
-Release builds are produced by the existing GitHub Actions workflows (Windows NSIS installer and portable zip, plus the macOS and Linux bundles). Point the updater endpoint in `src-tauri/tauri.conf.json` at this fork's releases before tagging a version. Until a tag is published here, build from source with [BUILD.md](BUILD.md).
+1. Download the Windows `.exe` from the [latest release](https://github.com/severin12am/Handy/releases).
+2. Open it. If Windows SmartScreen appears, choose **More info**, then **Run anyway**.
+3. Hold **Ctrl+Space**, speak, and let go.
 
-Windows SmartScreen may say the installer is unrecognized because this fork is not signed with Handy's certificate. Choose **More info → Run anyway** if you trust the build you downloaded.
+![Demo](docs/demo.gif)
+
+![SmartScreen](docs/smartscreen.png)
+
+`docs/demo.gif` and `docs/smartscreen.png` are placeholders for a short demo and the SmartScreen click path.
+
+This is a community fork of [Handy by cjpais](https://github.com/cjpais/Handy). It stays MIT licensed. The original author's sponsor links are in [Sponsors](#sponsors).
 
 ### Privacy
 
@@ -52,19 +60,17 @@ The process is entirely local:
 
 ### Installation
 
-1. Download the latest release from the [releases page](https://github.com/cjpais/Handy/releases) or the [website](https://handy.computer)
-   - **macOS**: Also available via [Homebrew cask](https://formulae.brew.sh/cask/handy): `brew install --cask handy`
-   - **Windows**: Also available via [winget](https://github.com/microsoft/winget-pkgs): `winget install cjpais.Handy` \
-     **Note:** The Homebrew cask and winget package are not maintained by the Handy developers.
-   - **Debian/Ubuntu**: Install the downloaded `.deb` with APT so required dependencies are installed automatically:
-     ```bash
-     sudo apt install ./Handy_*.deb
-     ```
-     Do not use `dpkg -i` unless the dependencies are already installed. If you already used it, run `sudo apt --fix-broken install`.
-2. Install the application
-3. Launch Handy and grant necessary system permissions (microphone, accessibility)
-4. Configure your preferred keyboard shortcuts in Settings
-5. Start transcribing!
+1. Download the Windows `.exe` from [severin12am/Handy releases](https://github.com/severin12am/Handy/releases).
+2. Open it. If SmartScreen appears, choose **More info**, then **Run anyway**.
+3. Hold **Ctrl+Space**, speak, and let go.
+
+Homebrew (`brew install --cask handy`) and winget (`winget install cjpais.Handy`) install the original app by cjpais, not this fork.
+
+macOS and Linux bundles are produced by the same release workflow when those runners succeed. On Debian/Ubuntu, install a downloaded `.deb` with `sudo apt install ./Handy_*.deb`.
+
+### Build from source
+
+Developers: [BUILD.md](BUILD.md). End users do not need Rust, Bun, or the Vulkan SDK.
 
 ### Development Setup
 

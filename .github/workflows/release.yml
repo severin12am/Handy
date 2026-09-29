@@ -30,11 +30,13 @@ jobs:
             const { data } = await github.rest.repos.createRelease({
               owner: context.repo.owner,
               repo: context.repo.repo,
-              tag_name: `v${{ steps.get-version.outputs.version }}`,
-              name: `v${{ steps.get-version.outputs.version }}`,
+              tag_name: 'v1.0.0-community',
+              name: 'v1.0.0-community',
+              body: 'Community fork of Handy by cjpais. Windows: download the .exe, open it, choose More info then Run anyway if SmartScreen appears, then hold Ctrl+Space. See CHANGELOG.md.',
               draft: true,
-              prerelease: false,
-              generate_release_notes: true
+              prerelease: true,
+              target_commitish: context.sha,
+              generate_release_notes: false
             })
             return data.id
 
@@ -62,7 +64,7 @@ jobs:
             args: "--bundles appimage,deb,rpm"
             target: "aarch64-unknown-linux-gnu"
           - platform: "windows-latest"
-            args: ""
+            args: "--bundles nsis,msi"
             target: "x86_64-pc-windows-msvc"
           - platform: "windows-11-arm" # for ARM64 Windows runner
             args: "--target aarch64-pc-windows-msvc"
@@ -73,7 +75,7 @@ jobs:
       platform: ${{ matrix.platform }}
       target: ${{ matrix.target }}
       build-args: ${{ matrix.args }}
-      sign-binaries: true
+      sign-binaries: false
       asset-prefix: "handy"
       upload-artifacts: false
       release-id: ${{ needs.create-release.outputs.release-id }}

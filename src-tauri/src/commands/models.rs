@@ -7,6 +7,15 @@ use tauri::{AppHandle, Emitter, Manager, State};
 
 #[tauri::command]
 #[specta::specta]
+pub fn recommend_starter_model() -> String {
+    crate::managers::transcription::starter_model_id_for_vram(
+        crate::managers::transcription::max_gpu_vram_mb(),
+    )
+    .to_string()
+}
+
+#[tauri::command]
+#[specta::specta]
 pub async fn get_available_models(
     model_manager: State<'_, Arc<ModelManager>>,
 ) -> Result<Vec<ModelInfo>, String> {

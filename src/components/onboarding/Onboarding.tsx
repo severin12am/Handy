@@ -5,6 +5,7 @@ import { ChevronDown } from "lucide-react";
 import type { ModelInfo } from "@/bindings";
 import type { ModelCardStatus } from "./ModelCard";
 import ModelCard, { isLegacySource } from "./ModelCard";
+import { commands } from "@/bindings";
 import HandyTextLogo from "../icons/HandyTextLogo";
 import { useModelStore } from "../../stores/modelStore";
 
@@ -31,6 +32,8 @@ const Onboarding: React.FC<OnboardingProps> = ({
   } = useModelStore();
   const [selectedModelId, setSelectedModelId] = useState<string | null>(null);
   const [showAll, setShowAll] = useState(false);
+  const [ready, setReady] = useState(false);
+  const autoStarted = useRef(false);
   const hasStartedSelection = useRef(false);
 
   const isBusy = selectedModelId !== null;
@@ -87,11 +90,9 @@ const Onboarding: React.FC<OnboardingProps> = ({
       !hasStartedSelection.current
     ) {
       hasStartedSelection.current = true;
-
-      // Model is ready — select it and transition
-      selectModel(selectedModelId).then((success) => {
+      void selectModel(selectedModelId).then((success) => {
         if (success) {
-          onModelSelected();
+          setReady(true);
         } else {
           toast.error(t("onboarding.errors.selectModel"));
           hasStartedSelection.current = false;
@@ -111,13 +112,35 @@ const Onboarding: React.FC<OnboardingProps> = ({
     t,
   ]);
 
+  useEffect(() => {
+    if (preview || autoStarted.current || models.length === 0) return;
+    autoStarted.current = true;
+    void (async () => {
+      try {
+        const modelId = await commands.recommendStarterModel();
+        const already = models.find(
+          (model) => model.id === modelId && model.is_downloaded,
+        );
+        if (already) {
+          handleSelectExistingModel(modelId);
+        } else {
+          await handleDownloadModel(modelId);
+        }
+      } catch {
+        autoStarted.current = false;
+      }
+    })();
+  }, [models, preview]);
+
+  const finish = () => {
+    if (!preview) onModelSelected();
+  };
+
   const handleDownloadModel = async (modelId: string) => {
     if (preview) return;
 
     setSelectedModelId(modelId);
 
-    // Error toast is handled centrally by the model-download-failed event listener
-    // in modelStore — no toast here to avoid duplicates.
     const success = await downloadModel(modelId);
     if (!success) {
       setSelectedModelId(null);
@@ -163,9 +186,45 @@ const Onboarding: React.FC<OnboardingProps> = ({
     <div className="h-screen w-full flex flex-col p-6 gap-4">
       <div className="flex flex-col items-center gap-2 shrink-0">
         <HandyTextLogo width={200} />
-        <p className="text-text/70 max-w-md font-medium mx-auto">
-          {t("onboarding.subtitle")}
+        <p className="text-text/70 max-w-md font-medium mx-auto text-center">
+          {t("onboarding.hero")}
         </p>
+        <div className="mt-2 rounded-xl border border-logo-primary/40 bg-logo-primary/10 px-6 py-4 text-center">
+          <div className="text-3xl font-semibold tracking-wide">
+            {t("onboarding.shortcutKeys")}
+          </div>
+          <p className="mt-1 text-sm text-text/80">{t("onboarding.shortcutHint")}</p>
+        </div>
+        <label className="mt-3 block w-full max-w-md text-left text-sm">
+          {t("onboarding.tryLabel")}
+          <textarea
+            className="mt-1 w-full rounded-md border border-mid-gray/40 bg-background px-3 py-2 text-base"
+            rows={3}
+            placeholder={t("onboarding.tryPlaceholder")}
+            disabled={!ready}
+          />
+        </label>
+        {ready ? (
+          <button
+            type="button"
+            className="mt-3 rounded-md bg-logo-primary px-4 py-2 text-sm font-medium text-white"
+            onClick={finish}
+          >
+            {t("onboarding.continue")}
+          </button>
+        ) : (
+          <div className="mt-2 w-full max-w-md">
+            <p className="text-sm text-text/70">{t("onboarding.downloading")}</p>
+            <div className="mt-2 h-2 w-full overflow-hidden rounded-full bg-mid-gray/30">
+              <div
+                className="h-full bg-logo-primary transition-[width]"
+                style={{
+                  width: `${selectedModelId ? (downloadProgress[selectedModelId]?.percentage ?? 0) : 0}%`,
+                }}
+              />
+            </div>
+          </div>
+        )}
       </div>
 
       <div className="max-w-[600px] w-full mx-auto text-center flex-1 flex flex-col min-h-0">
