@@ -139,6 +139,13 @@ struct InputEvent {
     /// They fire on every edge by design and must never be debounced —
     /// dropping one desyncs toggle parity and wedges recording on.
     external: bool,
+    /// When the sender observed the edge, not when the coordinator thread
+    /// dequeues it. The first activation after startup blocks inside
+    /// `Effect::Start` while the microphone initializes; a release queued
+    /// behind that block must still be measured from the real key-up, or a
+    /// short tap classifies as a hold and the recording stops with no audio
+    /// (cjpais/Handy#2089). Based on PR #2097 by @xronocode.
+    received_at: Instant,
 }
 
 impl InputEvent {
@@ -567,7 +574,12 @@ impl TranscriptionCoordinator {
 
                     match cmd {
                         Command::Input(input) => {
-                            if let Some(effect) = state.on_input(input, Instant::now()) {
+                            // Hold durations are measured edge-to-edge via the
+                            // sender's stamp, so time spent blocked in a prior
+                            // effect (first-activation mic init) cannot turn a
+                            // tap into a hold (cjpais/Handy#2089).
+                            let now = input.received_at;
+                            if let Some(effect) = state.on_input(input, now) {
                                 run_effect(&app, &mut state, effect);
                             }
                         }
@@ -642,6 +654,7 @@ impl TranscriptionCoordinator {
                 mode,
                 hold_threshold,
                 external,
+                received_at: Instant::now(),
             }))
             .is_err()
         {
@@ -896,6 +909,7 @@ mod tests {
             mode: ShortcutActivation::PushToTalk,
             hold_threshold: Duration::ZERO,
             external: false,
+            received_at: Instant::now(),
         }
     }
 
@@ -1034,6 +1048,7 @@ mod tests {
                     mode: ShortcutActivation::Toggle,
                     hold_threshold: Duration::ZERO,
                     external: true,
+                    received_at: at,
                 },
                 at,
             )
@@ -1096,6 +1111,7 @@ mod tests {
             mode: ShortcutActivation::Toggle,
             hold_threshold: Duration::ZERO,
             external,
+            received_at: Instant::now(),
         }
     }
 
@@ -1221,11 +1237,46 @@ mod tests {
             mode,
             hold_threshold: HOLD_THRESHOLD,
             external: false,
+            received_at: Instant::now(),
         }
     }
 
     fn ms(n: u64) -> Duration {
         Duration::from_millis(n)
+    }
+
+    /// Regression for #2089, based on cjpais/Handy#2097 by @xronocode.
+    /// A short tap whose release is queued behind microphone init must stay a
+    /// tap when both edges carry the sender's timestamps.
+    #[test]
+    fn auto_mode_tap_survives_first_activation_start_latency() {
+        let mode = ShortcutActivation::HoldOrToggle;
+        let mut state = CoordinatorState::new();
+        let t0 = Instant::now();
+
+        let mut press = input(mode, true);
+        press.received_at = t0;
+        assert!(matches!(
+            state.on_input(press, t0),
+            Some(Effect::Start { .. })
+        ));
+
+        let mut release = input(mode, false);
+        release.received_at = t0 + ms(150);
+        assert!(state.on_input(release, t0 + ms(150)).is_none());
+        assert!(
+            state.on_grace_expired().is_none(),
+            "a 150ms tap measured edge-to-edge must not stop the recording"
+        );
+        assert_eq!(state.stage, Stage::Recording(BINDING.to_string()));
+        assert!(state.is_locked(), "the tap must lock the session on");
+
+        let mut stop_press = input(mode, true);
+        stop_press.received_at = t0 + ms(5000);
+        assert!(matches!(
+            state.on_input(stop_press, t0 + ms(5000)),
+            Some(Effect::Stop { .. })
+        ));
     }
 
     /// Hold-or-toggle: a key held past the threshold is push-to-talk — the
