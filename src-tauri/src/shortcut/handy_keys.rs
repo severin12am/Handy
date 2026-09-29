@@ -110,8 +110,11 @@ impl HandyKeysState {
     fn manager_thread(cmd_rx: Receiver<ManagerCommand>, app: AppHandle) {
         info!("handy-keys manager thread started");
 
-        // Create the HotkeyManager in this thread
-        let manager = match HotkeyManager::new_with_blocking() {
+        // On Windows, observe shortcuts without swallowing them. Blocking mode
+        // ate the chord (and its modifiers) so other apps never saw the keys
+        // (cjpais/Handy#1314). Likely fixed, not reproduced against every
+        // desktop shortcut. macOS and Linux keep blocking.
+        let manager = match create_hotkey_manager() {
             Ok(m) => m,
             Err(e) => {
                 error!("Failed to create HotkeyManager: {}", e);
@@ -502,6 +505,20 @@ pub fn unregister_cancel_shortcut(app: &AppHandle) {
     }
 }
 
+/// Windows passes shortcut keys through to the focused app. Other platforms
+/// block the registered chord so it cannot also trigger that app.
+pub fn shortcut_keys_pass_through() -> bool {
+    cfg!(target_os = "windows")
+}
+
+fn create_hotkey_manager() -> std::result::Result<HotkeyManager, impl std::fmt::Display> {
+    if shortcut_keys_pass_through() {
+        HotkeyManager::new()
+    } else {
+        HotkeyManager::new_with_blocking()
+    }
+}
+
 /// Register a shortcut
 pub fn register_shortcut(app: &AppHandle, binding: ShortcutBinding) -> Result<(), String> {
     let state = app
@@ -571,4 +588,14 @@ pub fn stop_handy_keys_recording(app: AppHandle) -> Result<(), String> {
     let result = state.stop_recording();
     super::resume_all_shortcuts(&app);
     result
+}
+
+#[cfg(test)]
+mod tests {
+    use super::shortcut_keys_pass_through;
+
+    #[test]
+    fn windows_does_not_swallow_registered_shortcut_keys() {
+        assert_eq!(shortcut_keys_pass_through(), cfg!(target_os = "windows"));
+    }
 }
